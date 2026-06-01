@@ -1927,7 +1927,7 @@ count:
 // ── Execution state ──
 let executionInterval = null;
 let execSpeed = 10;
-let skipNextBreakpoint = false;
+let skipBreakpointAddr = -1; // Address to skip on next run resume (-1 = none)
 
 // ── DOM references ──
 const assembleBtn = document.getElementById('assembleBtn');
@@ -1946,16 +1946,20 @@ function execute() {
     return;
   }
 
-  // Check breakpoints (skip first tick after resume from breakpoint)
+  // Check breakpoints — if we just resumed from one, skip it once
   const pc = cpu.readRegister(cpu.REG_PC);
-  if (!skipNextBreakpoint && cpu.breakpoints.has(pc)) {
-    cpu.state = 'ready';
-    stopExecution();
-    updateDisplay();
-    updateRunButton();
-    return;
+  if (cpu.breakpoints.has(pc)) {
+    if (skipBreakpointAddr === pc) {
+      skipBreakpointAddr = -1; // Clear after skipping
+    } else {
+      cpu.state = 'ready';
+      stopExecution();
+      skipBreakpointAddr = pc; // Remember to skip this address on next resume
+      updateDisplay();
+      updateRunButton();
+      return;
+    }
   }
-  skipNextBreakpoint = false;
 
   cpu.step();
 
@@ -1971,7 +1975,7 @@ function execute() {
 function startExecution() {
   if (cpu.state !== 'ready') return;
   cpu.state = 'running';
-  skipNextBreakpoint = false;
+  // skipBreakpointAddr is preserved from the pause — don't reset it
   executionInterval = setInterval(execute, 1000 / execSpeed);
   updateRunButton();
   updateStatusBar();
@@ -2027,15 +2031,8 @@ function assembleCode() {
 function stepInstruction() {
   if (cpu.state !== 'ready') return;
 
-  // Check breakpoints (skip after resume)
-  const pc = cpu.readRegister(cpu.REG_PC);
-  if (!skipNextBreakpoint && cpu.breakpoints.has(pc)) {
-    skipNextBreakpoint = true;
-    updateDisplay();
-    return;
-  }
-  skipNextBreakpoint = false;
-
+  // Step always executes one instruction, even at breakpoints
+  skipBreakpointAddr = -1; // Clear any breakpoint skip state
   cpu.step();
   updateDisplay();
   updateRunButton();
@@ -2047,7 +2044,7 @@ function resetCPU() {
   stopExecution();
   cpu.fullReset();
   cpu.state = 'ready';
-  skipNextBreakpoint = false;
+  skipBreakpointAddr = -1;
   updateDisplay();
   updateRunButton();
   updateStatusBar();
