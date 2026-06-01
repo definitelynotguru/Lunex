@@ -1,0 +1,2268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lunex — Lua/Luau Interpreter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#111113;--surface:#19191b;--surface-raised:#1e1e21;
+  --border:rgba(255,255,255,0.06);--border-active:rgba(255,255,255,0.12);
+  --text:#e4e4e7;--text-secondary:#a1a1aa;--text-muted:#52525b;
+  --accent:#34d399;--accent-dim:rgba(52,211,153,0.15);--accent-border:rgba(52,211,153,0.3);
+  --red:#f87171;--red-dim:rgba(248,113,113,0.12);
+  --amber:#fbbf24;--amber-dim:rgba(251,191,36,0.12);
+  --sky:#38bdf8;--sky-dim:rgba(56,189,248,0.12);
+  --font:'Geist Mono','JetBrains Mono','SF Mono','Cascadia Code','Fira Code',monospace;
+  --font-ui:'Geist Mono',system-ui,sans-serif;
+  --radius:10px;--radius-sm:6px;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font)}
+body{
+  display:flex;flex-direction:column;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+}
+/* noise overlay - fixed, pointer-event-none for GPU safety */
+body::after{
+  content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  opacity:0.6;
+}
+/* ── NAV ── */
+#titlebar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;height:52px;
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  z-index:10;flex-shrink:0;
+}
+#titlebar h1{
+  font-size:15px;font-weight:600;letter-spacing:0.08em;
+  color:var(--text);
+}
+#titlebar h1 span{color:var(--accent);font-weight:700}
+.version-tag{
+  font-size:10px;font-weight:500;letter-spacing:0.06em;
+  color:var(--text-muted);padding:2px 8px;
+  border:1px solid var(--border);border-radius:999px;
+  text-transform:uppercase;
+}
+#titlebar .controls{display:flex;gap:6px;align-items:center}
+.kbd{
+  font-size:10px;font-weight:500;letter-spacing:0.04em;
+  color:var(--text-muted);padding:2px 6px;
+  border:1px solid var(--border);border-radius:4px;
+  background:rgba(255,255,255,0.02);
+  font-family:var(--font);
+}
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:0 14px;height:32px;border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface-raised);color:var(--text-secondary);
+  cursor:pointer;font-family:var(--font-ui);font-size:12px;font-weight:500;
+  letter-spacing:0.02em;
+  transition:all 0.2s cubic-bezier(0.16,1,0.3,1);
+  user-select:none;
+}
+.btn:active{transform:translateY(1px) scale(0.98)}
+.btn.run{
+  background:var(--accent-dim);border-color:var(--accent-border);color:var(--accent);
+}
+.btn.run:hover{
+  background:rgba(52,211,153,0.22);
+  box-shadow:0 0 0 1px var(--accent-border),inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.btn.clear{
+  background:transparent;border-color:var(--border);
+  color:var(--text-muted);
+}
+.btn.clear:hover{
+  background:var(--red-dim);border-color:rgba(248,113,113,0.25);color:var(--red);
+}
+.btn svg{width:14px;height:14px;stroke-width:2}
+/* ── MAIN LAYOUT ── */
+#main{display:flex;flex:1;overflow:hidden;padding:10px;gap:10px}
+/* ── PANE ── */
+.pane{
+  flex:1;display:flex;flex-direction:column;
+  border:1px solid var(--border);
+  border-radius:var(--radius);overflow:hidden;
+  background:var(--surface);
+  box-shadow:0 1px 3px rgba(0,0,0,0.2),0 8px 24px rgba(0,0,0,0.15);
+}
+.pane-header{
+  padding:0 16px;height:36px;
+  font-size:11px;font-weight:500;letter-spacing:0.08em;
+  text-transform:uppercase;color:var(--text-muted);
+  border-bottom:1px solid var(--border);
+  background:rgba(255,255,255,0.01);
+  display:flex;align-items:center;gap:10px;
+  flex-shrink:0;
+}
+.pane-header .indicator{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--accent);
+  box-shadow:0 0 6px var(--accent-dim);
+  animation:breath 3s ease-in-out infinite;
+}
+@keyframes breath{0%,100%{opacity:0.7}50%{opacity:1}}
+.pane-header .indicator.amber{background:var(--amber);box-shadow:0 0 6px var(--amber-dim)}
+/* ── EDITOR ── */
+.editor-wrap{flex:1;position:relative;overflow:hidden}
+#gutter{
+  position:absolute;left:0;top:0;bottom:0;width:52px;
+  background:rgba(0,0,0,0.15);
+  border-right:1px solid var(--border);
+  padding:14px 8px 14px 0;text-align:right;
+  font-size:13px;line-height:21px;
+  color:var(--text-muted);
+  overflow:hidden;z-index:2;user-select:none;
+  font-family:var(--font);font-weight:400;
+}
+#highlight{
+  position:absolute;left:52px;top:0;right:0;bottom:0;
+  padding:14px 14px 14px 16px;
+  font-size:13px;line-height:21px;
+  font-family:var(--font);font-weight:400;
+  white-space:pre;overflow:auto;z-index:1;
+  color:var(--text);pointer-events:none;
+}
+#editor{
+  position:absolute;left:52px;top:0;right:0;bottom:0;
+  padding:14px 14px 14px 16px;
+  font-size:13px;line-height:21px;
+  font-family:var(--font);font-weight:400;
+  background:transparent;border:none;outline:none;
+  resize:none;color:transparent;
+  caret-color:var(--accent);
+  z-index:3;overflow:auto;white-space:pre;
+  tab-size:2;-moz-tab-size:2;
+  width:calc(100% - 52px);
+}
+#editor::selection{background:rgba(52,211,153,0.18)}
+/* ── CONSOLE ── */
+#console{
+  flex:1;overflow:auto;
+  padding:14px 16px;
+  font-size:12.5px;line-height:21px;
+  font-family:var(--font);font-weight:400;
+  white-space:pre-wrap;word-break:break-word;
+}
+#console .line{padding:1px 0}
+#console .line.output{color:var(--text)}
+#console .line.error{
+  color:var(--red);padding:4px 8px;margin:2px -8px;
+  background:var(--red-dim);border-radius:4px;
+  border-left:2px solid rgba(248,113,113,0.4);
+}
+#console .line.info{color:var(--text-muted);font-style:italic}
+#console .line.warn{color:var(--amber)}
+/* ── STATUS BAR ── */
+#statusbar{
+  padding:0 24px;height:28px;
+  font-size:11px;color:var(--text-muted);
+  background:var(--surface);border-top:1px solid var(--border);
+  display:flex;justify-content:space-between;align-items:center;
+  font-family:var(--font);letter-spacing:0.03em;
+  flex-shrink:0;
+}
+#statusbar .status-executed{color:var(--accent)}
+#statusbar .status-error{color:var(--red)}
+/* ── SYNTAX HIGHLIGHTING ── */
+.hl-keyword{color:#c4b5fd;font-weight:600}
+.hl-string{color:#6ee7b7}
+.hl-number{color:#7dd3fc}
+.hl-comment{color:#52525b;font-style:italic}
+.hl-operator{color:#fdba74}
+.hl-builtin{color:#f9a8d4}
+.hl-boolean{color:#7dd3fc;font-weight:600}
+.hl-nil{color:#71717a;font-weight:600}
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.15)}
+/* ── RESPONSIVE ── */
+@media(max-width:768px){
+  #main{flex-direction:column;padding:6px;gap:6px}
+  .pane{min-height:40vh}
+  #titlebar{padding:0 14px}
+  .version-tag,.kbd{display:none}
+}
+</style>
+</head>
+<body>
+<div id="titlebar">
+  <div class="brand">
+    <h1><span>Lunex</span></h1>
+    <span class="version-tag">v1.0</span>
+  </div>
+  <div class="controls">
+    <span class="kbd">Ctrl+Enter</span>
+    <button class="btn run" id="runBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Run
+    </button>
+    <button class="btn clear" id="clearBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      Clear
+    </button>
+  </div>
+</div>
+<div id="main">
+  <div class="pane" id="editorPane">
+    <div class="pane-header"><span class="indicator"></span> Editor</div>
+    <div class="editor-wrap">
+      <div id="gutter"></div>
+      <pre id="highlight"></pre>
+      <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+    </div>
+  </div>
+  <div class="pane" id="consolePane">
+    <div class="pane-header"><span class="indicator amber"></span> Console</div>
+    <div id="console"></div>
+  </div>
+</div>
+<div id="statusbar">
+  <span id="statusLeft">Ready</span>
+  <span id="statusRight">Lunex v1.0</span>
+</div>
+
+<script>
+"use strict";
+
+// ============================================================
+// LEXER
+// ============================================================
+class Lexer {
+  constructor(source) {
+    this.source = source;
+    this.pos = 0;
+    this.line = 1;
+    this.col = 1;
+    this.tokens = [];
+  }
+
+  peek(offset = 0) { return this.source[this.pos + offset] || '\0'; }
+  advance() {
+    const ch = this.source[this.pos++];
+    if (ch === '\n') { this.line++; this.col = 1; } else { this.col++; }
+    return ch;
+  }
+
+  makeToken(type, value, line) {
+    return { type, value, line: line || this.line };
+  }
+
+  readString(quote) {
+    const startLine = this.line;
+    let str = '';
+    while (this.pos < this.source.length) {
+      const ch = this.advance();
+      if (ch === quote) return this.makeToken('string', str, startLine);
+      if (ch === '\\') {
+        const esc = this.advance();
+        switch(esc) {
+          case 'n': str += '\n'; break;
+          case 't': str += '\t'; break;
+          case 'r': str += '\r'; break;
+          case '\\': str += '\\'; break;
+          case '"': str += '"'; break;
+          case "'": str += "'"; break;
+          case '0': str += '\0'; break;
+          default: str += esc;
+        }
+      } else if (ch === '\n') {
+        throw new Error(`[Line ${startLine}] Unterminated string`);
+      } else {
+        str += ch;
+      }
+    }
+    throw new Error(`[Line ${startLine}] Unterminated string`);
+  }
+
+  readNumber() {
+    const startLine = this.line;
+    let num = '';
+    // hex
+    if (this.peek() === '0' && (this.peek(1) === 'x' || this.peek(1) === 'X')) {
+      num += this.advance() + this.advance();
+      while (this.pos < this.source.length && /[0-9a-fA-F]/.test(this.peek())) num += this.advance();
+      return this.makeToken('number', parseInt(num, 16), startLine);
+    }
+    while (this.pos < this.source.length && /[0-9]/.test(this.peek())) num += this.advance();
+    if (this.peek() === '.' && /[0-9]/.test(this.peek(1))) {
+      num += this.advance(); // .
+      while (this.pos < this.source.length && /[0-9]/.test(this.peek())) num += this.advance();
+    }
+    if (this.peek() === 'e' || this.peek() === 'E') {
+      num += this.advance();
+      if (this.peek() === '+' || this.peek() === '-') num += this.advance();
+      while (this.pos < this.source.length && /[0-9]/.test(this.peek())) num += this.advance();
+    }
+    return this.makeToken('number', parseFloat(num), startLine);
+  }
+
+  readIdentifier() {
+    const startLine = this.line;
+    let id = '';
+    while (this.pos < this.source.length && /[a-zA-Z0-9_]/.test(this.peek())) id += this.advance();
+    const keywords = ['and','break','do','else','elseif','end','false','for','function','if','in','local','nil','not','or','repeat','return','then','true','until','while'];
+    if (keywords.includes(id)) {
+      if (id === 'true' || id === 'false') return this.makeToken('boolean', id === 'true', startLine);
+      if (id === 'nil') return this.makeToken('nil', null, startLine);
+      return this.makeToken('keyword', id, startLine);
+    }
+    return this.makeToken('identifier', id, startLine);
+  }
+
+  tokenize() {
+    while (this.pos < this.source.length) {
+      const ch = this.peek();
+      const line = this.line;
+
+      // whitespace
+      if (/\s/.test(ch)) { this.advance(); continue; }
+
+      // comments
+      if (ch === '-' && this.peek(1) === '-') {
+        this.advance(); this.advance();
+        while (this.pos < this.source.length && this.peek() !== '\n') this.advance();
+        continue;
+      }
+
+      // strings
+      if (ch === '"' || ch === "'") { this.advance(); this.tokens.push(this.readString(ch)); continue; }
+
+      // numbers
+      if (/[0-9]/.test(ch)) { this.tokens.push(this.readNumber()); continue; }
+
+      // identifiers & keywords
+      if (/[a-zA-Z_]/.test(ch)) { this.tokens.push(this.readIdentifier()); continue; }
+
+      // multi-char operators
+      if (ch === '.' && this.peek(1) === '.' && this.peek(2) === '.') {
+        this.advance(); this.advance(); this.advance();
+        this.tokens.push(this.makeToken('vararg', '...', line));
+        continue;
+      }
+      if (ch === '.' && this.peek(1) === '.') {
+        this.advance(); this.advance();
+        this.tokens.push(this.makeToken('operator', '..', line));
+        continue;
+      }
+      if (ch === '=' && this.peek(1) === '=') {
+        this.advance(); this.advance();
+        this.tokens.push(this.makeToken('operator', '==', line));
+        continue;
+      }
+      if (ch === '~' && this.peek(1) === '=') {
+        this.advance(); this.advance();
+        this.tokens.push(this.makeToken('operator', '~=', line));
+        continue;
+      }
+      if (ch === '<' && this.peek(1) === '=') {
+        this.advance(); this.advance();
+        this.tokens.push(this.makeToken('operator', '<=', line));
+        continue;
+      }
+      if (ch === '>' && this.peek(1) === '=') {
+        this.advance(); this.advance();
+        this.tokens.push(this.makeToken('operator', '>=', line));
+        continue;
+      }
+
+      // single char
+      const singleOps = '+-*/%^#<>=~';
+      const punct = '(){}[],;:.';
+      if (singleOps.includes(ch)) {
+        this.advance();
+        this.tokens.push(this.makeToken('operator', ch, line));
+        continue;
+      }
+      if (punct.includes(ch)) {
+        this.advance();
+        this.tokens.push(this.makeToken('punctuator', ch, line));
+        continue;
+      }
+
+      throw new Error(`[Line ${line}] Unexpected character: '${ch}'`);
+    }
+    this.tokens.push(this.makeToken('eof', null, this.line));
+    return this.tokens;
+  }
+}
+
+// ============================================================
+// PARSER (Recursive Descent)
+// ============================================================
+class Parser {
+  constructor(tokens) {
+    this.tokens = tokens;
+    this.pos = 0;
+  }
+
+  peek() { return this.tokens[this.pos]; }
+  advance() { return this.tokens[this.pos++]; }
+
+  expect(type, value) {
+    const tok = this.advance();
+    if (tok.type !== type || (value !== undefined && tok.value !== value)) {
+      const got = tok.type === 'eof' ? 'end of input' : `'${tok.value}'`;
+      throw new Error(`[Line ${tok.line}] Expected '${value || type}', got ${got}`);
+    }
+    return tok;
+  }
+
+  match(type, value) {
+    const tok = this.peek();
+    if (tok.type === type && (value === undefined || tok.value === value)) {
+      return this.advance();
+    }
+    return null;
+  }
+
+  check(type, value) {
+    const tok = this.peek();
+    return tok.type === type && (value === undefined || tok.value === value);
+  }
+
+  // Entry
+  parse() {
+    const body = this.parseBlock();
+    return { type: 'Program', body };
+  }
+
+  // block = statement* [return]
+  parseBlock() {
+    const stmts = [];
+    while (!this.isBlockEnd()) {
+      if (this.check('keyword', 'return')) {
+        stmts.push(this.parseReturn());
+        break;
+      }
+      const stmt = this.parseStatement();
+      if (stmt) stmts.push(stmt);
+    }
+    return { type: 'Block', statements: stmts };
+  }
+
+  isBlockEnd() {
+    const t = this.peek();
+    if (t.type === 'eof') return true;
+    if (t.type === 'keyword') {
+      return ['end','else','elseif','until'].includes(t.value);
+    }
+    return false;
+  }
+
+  parseStatement() {
+    const t = this.peek();
+    if (t.type === 'punctuator' && t.value === ';') { this.advance(); return null; }
+
+    if (t.type === 'keyword') {
+      switch (t.value) {
+        case 'local': return this.parseLocal();
+        case 'function': return this.parseFunctionDecl();
+        case 'if': return this.parseIf();
+        case 'while': return this.parseWhile();
+        case 'repeat': return this.parseRepeat();
+        case 'for': return this.parseFor();
+        case 'do': return this.parseDo();
+        case 'break': this.advance(); return { type: 'BreakStatement', line: t.line };
+        case 'return': return this.parseReturn();
+      }
+    }
+
+    // assignment or call
+    return this.parseAssignOrCall();
+  }
+
+  parseLocal() {
+    const line = this.advance().line; // consume 'local'
+    if (this.check('keyword', 'function')) {
+      this.advance(); // consume 'function'
+      const name = this.expect('identifier').value;
+      const func = this.parseFuncBody();
+      func.line = line;
+      return { type: 'LocalFunctionDeclaration', name, func, line };
+    }
+    // local name [= expr], name [= expr]
+    const names = [];
+    const values = [];
+    names.push(this.expect('identifier').value);
+    while (this.match('punctuator', ',')) {
+      names.push(this.expect('identifier').value);
+    }
+    if (this.match('operator', '=')) {
+      values.push(...this.parseExprList());
+    }
+    return { type: 'LocalStatement', names, values, line };
+  }
+
+  parseFunctionDecl() {
+    const line = this.advance().line; // consume 'function'
+    // function Name[.Name]*[:method]
+    let name = this.expect('identifier').value;
+    let method = null;
+    while (this.match('punctuator', '.')) {
+      name += '.' + this.expect('identifier').value;
+    }
+    if (this.match('punctuator', ':')) {
+      method = this.expect('identifier').value;
+    }
+    const func = this.parseFuncBody();
+    func.line = line;
+    if (method) {
+      func.params.unshift('self');
+      // We need to store the receiver for assignment
+      return { type: 'FunctionDeclaration', name, method, func, line };
+    }
+    return { type: 'FunctionDeclaration', name, method: null, func, line };
+  }
+
+  parseFuncBody() {
+    this.expect('punctuator', '(');
+    const params = [];
+    let isVararg = false;
+    if (!this.check('punctuator', ')')) {
+      if (this.check('vararg')) { this.advance(); isVararg = true; }
+      else {
+        params.push(this.expect('identifier').value);
+        while (this.match('punctuator', ',')) {
+          if (this.check('vararg')) { this.advance(); isVararg = true; break; }
+          params.push(this.expect('identifier').value);
+        }
+      }
+    }
+    this.expect('punctuator', ')');
+    const body = this.parseBlock();
+    this.expect('keyword', 'end');
+    return { type: 'FunctionExpression', params, isVararg, body };
+  }
+
+  parseIf() {
+    const line = this.advance().line; // consume 'if'
+    const clauses = [];
+    const cond = this.parseExpression();
+    this.expect('keyword', 'then');
+    const body = this.parseBlock();
+    clauses.push({ condition: cond, body });
+    while (this.match('keyword', 'elseif')) {
+      const ec = this.parseExpression();
+      this.expect('keyword', 'then');
+      clauses.push({ condition: ec, body: this.parseBlock() });
+    }
+    if (this.match('keyword', 'else')) {
+      clauses.push({ condition: null, body: this.parseBlock() });
+    }
+    this.expect('keyword', 'end');
+    return { type: 'IfStatement', clauses, line };
+  }
+
+  parseWhile() {
+    const line = this.advance().line;
+    const condition = this.parseExpression();
+    this.expect('keyword', 'do');
+    const body = this.parseBlock();
+    this.expect('keyword', 'end');
+    return { type: 'WhileStatement', condition, body, line };
+  }
+
+  parseRepeat() {
+    const line = this.advance().line;
+    const body = this.parseBlock();
+    this.expect('keyword', 'until');
+    const condition = this.parseExpression();
+    return { type: 'RepeatStatement', condition, body, line };
+  }
+
+  parseFor() {
+    const line = this.advance().line; // consume 'for'
+    const name = this.expect('identifier').value;
+    if (this.match('operator', '=')) {
+      // numeric for
+      const start = this.parseExpression();
+      this.expect('punctuator', ',');
+      const limit = this.parseExpression();
+      let step = null;
+      if (this.match('punctuator', ',')) step = this.parseExpression();
+      this.expect('keyword', 'do');
+      const body = this.parseBlock();
+      this.expect('keyword', 'end');
+      return { type: 'NumericFor', name, start, limit, step, body, line };
+    }
+    // generic for
+    const names = [name];
+    while (this.match('punctuator', ',')) names.push(this.expect('identifier').value);
+    this.expect('keyword', 'in');
+    const iterators = this.parseExprList();
+    this.expect('keyword', 'do');
+    const body = this.parseBlock();
+    this.expect('keyword', 'end');
+    return { type: 'GenericFor', names, iterators, body, line };
+  }
+
+  parseDo() {
+    const line = this.advance().line;
+    const body = this.parseBlock();
+    this.expect('keyword', 'end');
+    return { type: 'DoStatement', body, line };
+  }
+
+  parseReturn() {
+    const line = this.advance().line;
+    const values = [];
+    if (!this.isBlockEnd() && !(this.peek().type === 'punctuator' && this.peek().value === ';')) {
+      values.push(...this.parseExprList());
+    }
+    return { type: 'ReturnStatement', values, line };
+  }
+
+  parseAssignOrCall() {
+    const expr = this.parseSuffixedExpr();
+    // assignment?
+    if (this.check('operator', '=')) {
+      const targets = [this.exprToTarget(expr)];
+      while (this.match('punctuator', ',')) {
+        targets.push(this.exprToTarget(this.parseSuffixedExpr()));
+      }
+      this.expect('operator', '=');
+      const values = this.parseExprList();
+      return { type: 'AssignStatement', targets, values, line: expr.line };
+    }
+    // call statement?
+    if (expr.type === 'CallExpression' || expr.type === 'MethodCall') {
+      return { type: 'CallStatement', expression: expr, line: expr.line };
+    }
+    // standalone expression (discard) — could be e.g. a parenthesized expression
+    return { type: 'CallStatement', expression: expr, line: expr.line };
+  }
+
+  exprToTarget(expr) {
+    if (expr.type === 'Identifier') return { type: 'Identifier', name: expr.name, line: expr.line };
+    if (expr.type === 'IndexExpression') return expr;
+    if (expr.type === 'FieldExpression') return expr;
+    throw new Error(`[Line ${expr.line}] Invalid assignment target`);
+  }
+
+  parseExprList() {
+    const exprs = [this.parseExpression()];
+    while (this.match('punctuator', ',')) {
+      exprs.push(this.parseExpression());
+    }
+    return exprs;
+  }
+
+  // ---- Expression parsing with precedence climbing ----
+  parseExpression(minPrec = 0) {
+    return this.parseOr();
+  }
+
+  parseOr() {
+    let left = this.parseAnd();
+    while (this.check('keyword', 'or')) {
+      const op = this.advance();
+      const right = this.parseAnd();
+      left = { type: 'BinaryExpression', op: 'or', left, right, line: op.line };
+    }
+    return left;
+  }
+
+  parseAnd() {
+    let left = this.parseComparison();
+    while (this.check('keyword', 'and')) {
+      const op = this.advance();
+      const right = this.parseComparison();
+      left = { type: 'BinaryExpression', op: 'and', left, right, line: op.line };
+    }
+    return left;
+  }
+
+  parseComparison() {
+    let left = this.parseConcat();
+    while (this.check('operator')) {
+      const op = this.peek().value;
+      if (['==','~=','<','>','<=','>='].includes(op)) {
+        this.advance();
+        const right = this.parseConcat();
+        left = { type: 'BinaryExpression', op, left, right, line: left.line };
+      } else break;
+    }
+    return left;
+  }
+
+  parseConcat() {
+    let left = this.parseAddSub();
+    if (this.check('operator', '..')) {
+      const op = this.advance();
+      const right = this.parseConcat(); // right-associative
+      left = { type: 'BinaryExpression', op: '..', left, right, line: op.line };
+    }
+    return left;
+  }
+
+  parseAddSub() {
+    let left = this.parseMulDiv();
+    while (this.check('operator')) {
+      const op = this.peek().value;
+      if (op === '+' || op === '-') {
+        this.advance();
+        const right = this.parseMulDiv();
+        left = { type: 'BinaryExpression', op, left, right, line: left.line };
+      } else break;
+    }
+    return left;
+  }
+
+  parseMulDiv() {
+    let left = this.parseUnary();
+    while (this.check('operator')) {
+      const op = this.peek().value;
+      if (op === '*' || op === '/' || op === '%') {
+        this.advance();
+        const right = this.parseUnary();
+        left = { type: 'BinaryExpression', op, left, right, line: left.line };
+      } else break;
+    }
+    return left;
+  }
+
+  parseUnary() {
+    const t = this.peek();
+    if (t.type === 'keyword' && t.value === 'not') {
+      this.advance();
+      const expr = this.parseUnary();
+      return { type: 'UnaryExpression', op: 'not', operand: expr, line: t.line };
+    }
+    if (t.type === 'operator' && t.value === '-') {
+      this.advance();
+      const expr = this.parseUnary();
+      return { type: 'UnaryExpression', op: '-', operand: expr, line: t.line };
+    }
+    if (t.type === 'operator' && t.value === '#') {
+      this.advance();
+      const expr = this.parseUnary();
+      return { type: 'UnaryExpression', op: '#', operand: expr, line: t.line };
+    }
+    return this.parsePower();
+  }
+
+  parsePower() {
+    let left = this.parsePrimary();
+    if (this.check('operator', '^')) {
+      const op = this.advance();
+      const right = this.parseUnary(); // right-associative
+      left = { type: 'BinaryExpression', op: '^', left, right, line: op.line };
+    }
+    return left;
+  }
+
+  parsePrimary() {
+    const t = this.peek();
+    if (t.type === 'number') { this.advance(); return { type: 'NumberLiteral', value: t.value, line: t.line }; }
+    if (t.type === 'string') { this.advance(); return this.parseSuffixes({ type: 'StringLiteral', value: t.value, line: t.line }); }
+    if (t.type === 'boolean') { this.advance(); return { type: 'BooleanLiteral', value: t.value, line: t.line }; }
+    if (t.type === 'nil') { this.advance(); return { type: 'NilLiteral', line: t.line }; }
+    if (t.type === 'vararg') { this.advance(); return { type: 'VarargExpression', line: t.line }; }
+    if (t.type === 'keyword' && t.value === 'function') {
+      this.advance();
+      const func = this.parseFuncBody();
+      func.line = t.line;
+      return func;
+    }
+    if (t.type === 'punctuator' && t.value === '{') {
+      return this.parseTableConstructor();
+    }
+    if (t.type === 'punctuator' && t.value === '(') {
+      this.advance();
+      const expr = this.parseExpression();
+      this.expect('punctuator', ')');
+      return this.parseSuffixes(expr);
+    }
+    if (t.type === 'identifier') {
+      this.advance();
+      const id = { type: 'Identifier', name: t.value, line: t.line };
+      return this.parseSuffixes(id);
+    }
+    throw new Error(`[Line ${t.line}] Unexpected token: ${t.type === 'eof' ? 'end of input' : `'${t.value}'`}`);
+  }
+
+  parseSuffixes(expr) {
+    while (true) {
+      if (this.check('punctuator', '[')) {
+        this.advance();
+        const index = this.parseExpression();
+        this.expect('punctuator', ']');
+        expr = { type: 'IndexExpression', object: expr, index, line: expr.line };
+      } else if (this.check('punctuator', '.')) {
+        this.advance();
+        const field = this.expect('identifier').value;
+        expr = { type: 'FieldExpression', object: expr, field, line: expr.line };
+      } else if (this.check('punctuator', ':')) {
+        this.advance();
+        const method = this.expect('identifier').value;
+        this.expect('punctuator', '(');
+        const args = this.parseArgList();
+        this.expect('punctuator', ')');
+        expr = { type: 'MethodCall', object: expr, method, args, line: expr.line };
+      } else if (this.check('punctuator', '(')) {
+        this.advance();
+        const args = this.parseArgList();
+        this.expect('punctuator', ')');
+        expr = { type: 'CallExpression', callee: expr, args, line: expr.line };
+      } else if (this.check('string')) {
+        // f"str" sugar for f("str")
+        const arg = this.advance();
+        expr = { type: 'CallExpression', callee: expr, args: [{ type: 'StringLiteral', value: arg.value, line: arg.line }], line: expr.line };
+      } else if (this.check('punctuator', '{')) {
+        // f{table} sugar for f({table})
+        const arg = this.parseTableConstructor();
+        expr = { type: 'CallExpression', callee: expr, args: [arg], line: expr.line };
+      } else {
+        break;
+      }
+    }
+    return expr;
+  }
+
+  parseSuffixedExpr() {
+    return this.parseSuffixes(this.parsePrimary());
+  }
+
+  parseArgList() {
+    if (this.check('punctuator', ')')) return [];
+    return this.parseExprList();
+  }
+
+  parseTableConstructor() {
+    const line = this.expect('punctuator', '{').line;
+    const fields = [];
+    let arrayIndex = 1;
+    while (!this.check('punctuator', '}')) {
+      if (this.check('punctuator', '[')) {
+        // [expr] = expr
+        this.advance();
+        const key = this.parseExpression();
+        this.expect('punctuator', ']');
+        this.expect('operator', '=');
+        const value = this.parseExpression();
+        fields.push({ key, value });
+      } else if (this.check('identifier') && this.tokens[this.pos + 1] && this.tokens[this.pos + 1].type === 'operator' && this.tokens[this.pos + 1].value === '=') {
+        // name = expr
+        const name = this.advance().value;
+        this.advance(); // =
+        const value = this.parseExpression();
+        fields.push({ key: { type: 'StringLiteral', value: name, line: this.line }, value });
+      } else {
+        // positional
+        const value = this.parseExpression();
+        fields.push({ key: { type: 'NumberLiteral', value: arrayIndex++, line: value.line }, value });
+      }
+      if (this.match('punctuator', ',') || this.match('punctuator', ';')) continue;
+      break;
+    }
+    this.expect('punctuator', '}');
+    return { type: 'TableConstructor', fields, line };
+  }
+}
+
+// ============================================================
+// ENVIRONMENT (Scope Chain)
+// ============================================================
+class Environment {
+  constructor(parent) {
+    this.vars = Object.create(null);
+    this.parent = parent || null;
+  }
+  define(name, value) { this.vars[name] = value; }
+  get(name) {
+    if (name in this.vars) return this.vars[name];
+    if (this.parent) return this.parent.get(name);
+    return undefined;
+  }
+  set(name, value) {
+    if (name in this.vars) { this.vars[name] = value; return; }
+    if (this.parent) { this.parent.set(name, value); return; }
+    this.vars[name] = value; // globals auto-define
+  }
+  has(name) { return name in this.vars; }
+}
+
+// ============================================================
+// ERROR CLASSES
+// ============================================================
+class LuaError extends Error {
+  constructor(message, level) {
+    super(message);
+    this.name = 'LuaError';
+    this.level = level || 1;
+  }
+}
+
+class BreakSignal extends Error {
+  constructor() { super('break'); this.name = 'BreakSignal'; }
+}
+
+class ReturnSignal extends Error {
+  constructor(values) { super('return'); this.name = 'ReturnSignal'; this.values = values; }
+}
+
+// ============================================================
+// INTERPRETER
+// ============================================================
+class Interpreter {
+  constructor() {
+    this.callStack = [];
+    this.maxCallDepth = 200;
+    this.console = null; // set by UI
+  }
+
+  error(msg, level) {
+    level = level || 1;
+    const frameIdx = Math.max(0, this.callStack.length - level);
+    const frame = this.callStack[frameIdx] || {};
+    const line = frame.line || '?';
+    const funcName = frame.name || '?';
+    throw new LuaError(`[Line ${line}] ${msg}`, level);
+  }
+
+  runtimeError(msg, line) {
+    throw new LuaError(`[Line ${line || '?'}] ${msg}`);
+  }
+
+  // Evaluate a list of expressions, returning array of values
+  evalExprList(nodes, env) {
+    const results = [];
+    for (let i = 0; i < nodes.length; i++) {
+      const val = this.evaluate(nodes[i], env);
+      if (val && val.__varargs) {
+        results.push(...val);
+      } else if (i === nodes.length - 1 && Array.isArray(val) && val.__multi) {
+        results.push(...val);
+      } else {
+        results.push(val);
+      }
+    }
+    return results;
+  }
+
+  // Get single value (truncate multi-return)
+  singleValue(val) {
+    if (Array.isArray(val) && val.__multi) return val[0];
+    if (val && val.__varargs) return val[0];
+    return val;
+  }
+
+  // Spread multi-return as last arg
+  spreadArgs(args) {
+    const result = [];
+    for (let i = 0; i < args.length; i++) {
+      const val = args[i];
+      if (Array.isArray(val) && val.__multi && i === args.length - 1) {
+        result.push(...val);
+      } else if (val && val.__varargs && i === args.length - 1) {
+        result.push(...val);
+      } else {
+        result.push(this.singleValue(val));
+      }
+    }
+    return result;
+  }
+
+  // ---- Main evaluate ----
+  evaluate(node, env) {
+    if (!node) return null;
+    switch (node.type) {
+      case 'Program': return this.execBlock(node.body.statements, env);
+      case 'Block': return this.execBlock(node.statements, env);
+      case 'NumberLiteral': return node.value;
+      case 'StringLiteral': return node.value;
+      case 'BooleanLiteral': return node.value;
+      case 'NilLiteral': return null;
+      case 'VarargExpression': return env.get('__varargs') || this.runtimeError("cannot use '...' outside a vararg function", node.line);
+      case 'Identifier': {
+        const val = env.get(node.name);
+        if (val === undefined) return null; // undefined vars are nil in Lua
+        return val;
+      }
+      case 'BinaryExpression': return this.evalBinary(node, env);
+      case 'UnaryExpression': return this.evalUnary(node, env);
+      case 'CallExpression': return this.evalCall(node, env);
+      case 'MethodCall': return this.evalMethodCall(node, env);
+      case 'IndexExpression': return this.evalIndex(node, env);
+      case 'FieldExpression': return this.evalField(node, env);
+      case 'FunctionExpression': return this.evalFuncExpr(node, env);
+      case 'TableConstructor': return this.evalTable(node, env);
+      case 'LocalStatement': return this.execLocal(node, env);
+      case 'AssignStatement': return this.execAssign(node, env);
+      case 'CallStatement': return this.singleValue(this.evaluate(node.expression, env));
+      case 'FunctionDeclaration': return this.execFuncDecl(node, env);
+      case 'LocalFunctionDeclaration': return this.execLocalFuncDecl(node, env);
+      case 'IfStatement': return this.execIf(node, env);
+      case 'WhileStatement': return this.execWhile(node, env);
+      case 'RepeatStatement': return this.execRepeat(node, env);
+      case 'NumericFor': return this.execNumericFor(node, env);
+      case 'GenericFor': return this.execGenericFor(node, env);
+      case 'DoStatement': return this.execBlock(node.body.statements, new Environment(env));
+      case 'BreakStatement': throw new BreakSignal();
+      case 'ReturnStatement': {
+        const vals = this.evalExprList(node.values, env);
+        throw new ReturnSignal(vals);
+      }
+      default: this.runtimeError(`Unknown node type: ${node.type}`, node.line);
+    }
+  }
+
+  execBlock(stmts, env) {
+    let result = null;
+    for (const stmt of stmts) {
+      result = this.evaluate(stmt, env);
+    }
+    return result;
+  }
+
+  // ---- Binary ----
+  evalBinary(node, env) {
+    const line = node.line;
+    // Short-circuit
+    if (node.op === 'and') {
+      const left = this.singleValue(this.evaluate(node.left, env));
+      if (!this.isTruthy(left)) return left;
+      return this.singleValue(this.evaluate(node.right, env));
+    }
+    if (node.op === 'or') {
+      const left = this.singleValue(this.evaluate(node.left, env));
+      if (this.isTruthy(left)) return left;
+      return this.singleValue(this.evaluate(node.right, env));
+    }
+
+    const left = this.singleValue(this.evaluate(node.left, env));
+    const right = this.singleValue(this.evaluate(node.right, env));
+
+    switch (node.op) {
+      case '+': {
+        if (typeof left !== 'number' || typeof right !== 'number')
+          this.runtimeError("attempt to perform arithmetic on a " + (typeof left !== 'number' ? this.luaType(left) : this.luaType(right)) + " value", line);
+        return left + right;
+      }
+      case '-': {
+        if (typeof left !== 'number' || typeof right !== 'number')
+          this.runtimeError("attempt to perform arithmetic on a " + (typeof left !== 'number' ? this.luaType(left) : this.luaType(right)) + " value", line);
+        return left - right;
+      }
+      case '*': {
+        if (typeof left !== 'number' || typeof right !== 'number')
+          this.runtimeError("attempt to perform arithmetic on a " + (typeof left !== 'number' ? this.luaType(left) : this.luaType(right)) + " value", line);
+        return left * right;
+      }
+      case '/': {
+        if (typeof left !== 'number' || typeof right !== 'number')
+          this.runtimeError("attempt to perform arithmetic on a " + (typeof left !== 'number' ? this.luaType(left) : this.luaType(right)) + " value", line);
+        return left / right;
+      }
+      case '%': {
+        if (typeof left !== 'number' || typeof right !== 'number')
+          this.runtimeError("attempt to perform arithmetic on a " + (typeof left !== 'number' ? this.luaType(left) : this.luaType(right)) + " value", line);
+        return left % right;
+      }
+      case '^': {
+        if (typeof left !== 'number' || typeof right !== 'number')
+          this.runtimeError("attempt to perform arithmetic on a " + (typeof left !== 'number' ? this.luaType(left) : this.luaType(right)) + " value", line);
+        return Math.pow(left, right);
+      }
+      case '..': {
+        const ls = left === null ? 'nil' : (typeof left === 'boolean' ? String(left) : String(left));
+        const rs = right === null ? 'nil' : (typeof right === 'boolean' ? String(right) : String(right));
+        // Lua error: attempt to concatenate a nil/boolean value
+        if (left === null || left === undefined) this.runtimeError("attempt to concatenate a nil value", line);
+        if (right === null || right === undefined) this.runtimeError("attempt to concatenate a nil value", line);
+        if (typeof left === 'boolean') this.runtimeError("attempt to concatenate a boolean value", line);
+        if (typeof right === 'boolean') this.runtimeError("attempt to concatenate a boolean value", line);
+        return String(left) + String(right);
+      }
+      case '==': return this.luaEqual(left, right);
+      case '~=': return !this.luaEqual(left, right);
+      case '<': return this.luaCompare(left, right, '<', line);
+      case '>': return this.luaCompare(left, right, '>', line);
+      case '<=': return this.luaCompare(left, right, '<=', line);
+      case '>=': return this.luaCompare(left, right, '>=', line);
+      default: this.runtimeError(`Unknown operator: ${node.op}`, line);
+    }
+  }
+
+  luaEqual(a, b) {
+    if (a === b) return true;
+    if (a === null && b === null) return true;
+    return false;
+  }
+
+  luaCompare(a, b, op, line) {
+    if (typeof a === 'number' && typeof b === 'number') {
+      switch(op) {
+        case '<': return a < b;
+        case '>': return a > b;
+        case '<=': return a <= b;
+        case '>=': return a >= b;
+      }
+    }
+    if (typeof a === 'string' && typeof b === 'string') {
+      switch(op) {
+        case '<': return a < b;
+        case '>': return a > b;
+        case '<=': return a <= b;
+        case '>=': return a >= b;
+      }
+    }
+    this.runtimeError(`attempt to compare ${this.luaType(a)} with ${this.luaType(b)}`, line);
+  }
+
+  // ---- Unary ----
+  evalUnary(node, env) {
+    const val = this.singleValue(this.evaluate(node.operand, env));
+    switch (node.op) {
+      case '-':
+        if (typeof val !== 'number') this.runtimeError("attempt to perform arithmetic on a " + this.luaType(val) + " value", node.line);
+        return -val;
+      case 'not': return !this.isTruthy(val);
+      case '#':
+        if (typeof val === 'string') return val.length;
+        if (Array.isArray(val)) {
+          // Lua # counts consecutive integer keys from 1
+          let len = 0;
+          while (val[len + 1] !== undefined) len++;
+          return len;
+        }
+        if (val && typeof val === 'object') {
+          let len = 0;
+          while (val[len + 1] !== undefined) len++;
+          return len;
+        }
+        this.runtimeError("attempt to get length of a " + this.luaType(val) + " value", node.line);
+      default: this.runtimeError(`Unknown unary op: ${node.op}`, node.line);
+    }
+  }
+
+  // ---- Call ----
+  evalCall(node, env) {
+    const callee = this.singleValue(this.evaluate(node.callee, env));
+    const argNodes = node.args;
+    const rawArgs = [];
+    for (let i = 0; i < argNodes.length; i++) {
+      const val = this.evaluate(argNodes[i], env);
+      if (i === argNodes.length - 1 && Array.isArray(val) && val.__multi) {
+        rawArgs.push(...val);
+      } else if (i === argNodes.length - 1 && val && val.__varargs) {
+        rawArgs.push(...val);
+      } else {
+        rawArgs.push(this.singleValue(val));
+      }
+    }
+    return this.callFunction(callee, rawArgs, node.line);
+  }
+
+  evalMethodCall(node, env) {
+    const obj = this.singleValue(this.evaluate(node.object, env));
+    if (obj === null || obj === undefined) {
+      this.runtimeError("attempt to index a nil value", node.line);
+    }
+    let method = this.getField(obj, node.method, node.line);
+    if (method === undefined || method === null) {
+      this.runtimeError(`attempt to call a nil value (method '${node.method}')`, node.line);
+    }
+    const argNodes = node.args;
+    const rawArgs = [obj]; // self
+    for (let i = 0; i < argNodes.length; i++) {
+      const val = this.evaluate(argNodes[i], env);
+      if (i === argNodes.length - 1 && Array.isArray(val) && val.__multi) {
+        rawArgs.push(...val);
+      } else if (i === argNodes.length - 1 && val && val.__varargs) {
+        rawArgs.push(...val);
+      } else {
+        rawArgs.push(this.singleValue(val));
+      }
+    }
+    return this.callFunction(method, rawArgs, node.line);
+  }
+
+  callFunction(callee, args, line) {
+    if (typeof callee === 'function') {
+      // JS native function (stdlib)
+      return callee(...args);
+    }
+    if (callee && callee.__luaFunc) {
+      // Lua function
+      if (this.callStack.length >= this.maxCallDepth) {
+        this.runtimeError("stack overflow", line);
+      }
+      const func = callee;
+      const funcEnv = new Environment(func.closure);
+      // Bind params
+      for (let i = 0; i < func.params.length; i++) {
+        funcEnv.define(func.params[i], args[i] !== undefined ? args[i] : null);
+      }
+      // Handle varargs
+      if (func.isVararg) {
+        const varargs = args.slice(func.params.length);
+        varargs.__varargs = true;
+        funcEnv.define('__varargs', varargs);
+      } else {
+        // Even in non-vararg functions, __varargs should be empty
+        const empty = []; empty.__varargs = true;
+        funcEnv.define('__varargs', empty);
+      }
+      this.callStack.push({ name: func.name || '<anon>', line: line || func.line });
+      try {
+        const result = this.execBlock(func.body.statements, funcEnv);
+        this.callStack.pop();
+        return result;
+      } catch (e) {
+        this.callStack.pop();
+        if (e instanceof ReturnSignal) {
+          if (e.values.length === 0) return null;
+          if (e.values.length === 1) return e.values[0];
+          const multi = [...e.values]; multi.__multi = true;
+          return multi;
+        }
+        throw e;
+      }
+    }
+    // String metatable method
+    if (typeof callee === 'string') {
+      this.runtimeError("attempt to call a string value", line);
+    }
+    this.runtimeError("attempt to call a " + this.luaType(callee) + " value", line);
+  }
+
+  // ---- Index/Field ----
+  evalIndex(node, env) {
+    const obj = this.singleValue(this.evaluate(node.object, env));
+    const key = this.singleValue(this.evaluate(node.index, env));
+    if (obj === null || obj === undefined) {
+      this.runtimeError("attempt to index a nil value", node.line);
+    }
+    return this.getField(obj, key, node.line);
+  }
+
+  evalField(node, env) {
+    const obj = this.singleValue(this.evaluate(node.object, env));
+    if (obj === null || obj === undefined) {
+      this.runtimeError("attempt to index a nil value", node.line);
+    }
+    return this.getField(obj, node.field, node.line);
+  }
+
+  getField(obj, key, line) {
+    if (typeof obj === 'string') {
+      // String metatable
+      const method = this.stringMethods[key];
+      if (method) return method;
+      const lib = this.stringLib;
+      if (lib && lib[key] !== undefined) return lib[key];
+      return null;
+    }
+    if (Array.isArray(obj)) {
+      if (obj[key] !== undefined) return obj[key];
+      // Check metatable
+      if (obj.__metatable) {
+        const mt = obj.__metatable;
+        const idx = mt.__index;
+        if (idx) {
+          if (idx.__luaFunc || typeof idx === 'function') return this.callFunction(idx, [obj, key], line);
+          if (typeof idx === 'object') return this.getField(idx, key, line);
+        }
+      }
+      // Check table lib
+      if (this.tableLib && this.tableLib[key] !== undefined) return this.tableLib[key];
+      return null;
+    }
+    if (obj && typeof obj === 'object') {
+      if (obj[key] !== undefined) return obj[key];
+      if (obj.__metatable) {
+        const mt = obj.__metatable;
+        const idx = mt.__index;
+        if (idx) {
+          if (idx.__luaFunc || typeof idx === 'function') return this.callFunction(idx, [obj, key], line);
+          if (typeof idx === 'object') return this.getField(idx, key, line);
+        }
+      }
+      return null;
+    }
+    if (typeof obj === 'number') {
+      // number has no useful methods in standard Lua
+      return null;
+    }
+    return null;
+  }
+
+  setField(obj, key, value, line) {
+    if (obj === null || obj === undefined) {
+      this.runtimeError("attempt to index a nil value", line);
+    }
+    obj[key] = value;
+  }
+
+  // ---- Function expression ----
+  evalFuncExpr(node, env) {
+    return {
+      __luaFunc: true,
+      params: node.params,
+      isVararg: node.isVararg,
+      body: node.body,
+      closure: env,
+      name: '<anon>',
+      line: node.line
+    };
+  }
+
+  // ---- Table ----
+  evalTable(node, env) {
+    const t = {};
+    let nextIdx = 1;
+    for (let fi = 0; fi < node.fields.length; fi++) {
+      const field = node.fields[fi];
+      const key = this.singleValue(this.evaluate(field.key, env));
+      const rawVal = this.evaluate(field.value, env);
+      const isLast = fi === node.fields.length - 1;
+      // Spread varargs or multi-return as the last positional entry
+      if (isLast && Array.isArray(rawVal) && rawVal.__varargs) {
+        for (let i = 0; i < rawVal.length; i++) {
+          t[nextIdx++] = rawVal[i];
+        }
+      } else if (isLast && Array.isArray(rawVal) && rawVal.__multi) {
+        for (let i = 0; i < rawVal.length; i++) {
+          t[nextIdx++] = rawVal[i];
+        }
+      } else {
+        const value = this.singleValue(rawVal);
+        if (typeof key === 'number') { nextIdx = key + 1; }
+        t[key] = value;
+      }
+    }
+    return t;
+  }
+
+  // ---- Statements ----
+  execLocal(node, env) {
+    const values = this.evalExprList(node.values, env);
+    for (let i = 0; i < node.names.length; i++) {
+      env.define(node.names[i], values[i] !== undefined ? values[i] : null);
+    }
+  }
+
+  execAssign(node, env) {
+    const values = this.evalExprList(node.values, env);
+    for (let i = 0; i < node.targets.length; i++) {
+      const target = node.targets[i];
+      const val = values[i] !== undefined ? values[i] : null;
+      if (target.type === 'Identifier') {
+        env.set(target.name, val);
+      } else if (target.type === 'IndexExpression') {
+        const obj = this.singleValue(this.evaluate(target.object, env));
+        const key = this.singleValue(this.evaluate(target.index, env));
+        this.setField(obj, key, val, target.line);
+      } else if (target.type === 'FieldExpression') {
+        const obj = this.singleValue(this.evaluate(target.object, env));
+        this.setField(obj, target.field, val, target.line);
+      }
+    }
+  }
+
+  execFuncDecl(node, env) {
+    const func = {
+      __luaFunc: true,
+      params: node.func.params,
+      isVararg: node.func.isVararg,
+      body: node.func.body,
+      closure: env,
+      name: node.method ? node.name + ':' + node.method : node.name,
+      line: node.line
+    };
+    if (node.method) {
+      // function obj:method() — resolve obj, set method on it
+      const parts = node.name.split('.');
+      let obj = env.get(parts[0]);
+      for (let i = 1; i < parts.length; i++) {
+        obj = this.getField(obj, parts[i], node.line);
+      }
+      this.setField(obj, node.method, func, node.line);
+    } else {
+      // Regular function — might be dotted name
+      const parts = node.name.split('.');
+      if (parts.length === 1) {
+        env.set(node.name, func);
+      } else {
+        let obj = env.get(parts[0]);
+        for (let i = 1; i < parts.length - 1; i++) {
+          obj = this.getField(obj, parts[i], node.line);
+        }
+        this.setField(obj, parts[parts.length - 1], func, node.line);
+      }
+    }
+  }
+
+  execLocalFuncDecl(node, env) {
+    const func = {
+      __luaFunc: true,
+      params: node.func.params,
+      isVararg: node.func.isVararg,
+      body: node.func.body,
+      closure: env,
+      name: node.name,
+      line: node.line
+    };
+    env.define(node.name, func);
+  }
+
+  execIf(node, env) {
+    for (const clause of node.clauses) {
+      if (clause.condition === null) {
+        // else
+        return this.execBlock(clause.body.statements, new Environment(env));
+      }
+      const cond = this.singleValue(this.evaluate(clause.condition, env));
+      if (this.isTruthy(cond)) {
+        return this.execBlock(clause.body.statements, new Environment(env));
+      }
+    }
+  }
+
+  execWhile(node, env) {
+    while (true) {
+      const cond = this.singleValue(this.evaluate(node.condition, env));
+      if (!this.isTruthy(cond)) break;
+      try {
+        this.execBlock(node.body.statements, new Environment(env));
+      } catch (e) {
+        if (e instanceof BreakSignal) break;
+        throw e;
+      }
+    }
+  }
+
+  execRepeat(node, env) {
+    const blockEnv = new Environment(env);
+    while (true) {
+      try {
+        this.execBlock(node.body.statements, blockEnv);
+      } catch (e) {
+        if (e instanceof BreakSignal) break;
+        throw e;
+      }
+      const cond = this.singleValue(this.evaluate(node.condition, blockEnv));
+      if (this.isTruthy(cond)) break;
+    }
+  }
+
+  execNumericFor(node, env) {
+    const start = this.singleValue(this.evaluate(node.start, env));
+    const limit = this.singleValue(this.evaluate(node.limit, env));
+    const step = node.step ? this.singleValue(this.evaluate(node.step, env)) : 1;
+    if (typeof start !== 'number' || typeof limit !== 'number' || typeof step !== 'number') {
+      this.runtimeError("for loop bounds must be numbers", node.line);
+    }
+    const forEnv = new Environment(env);
+    forEnv.define(node.name, start);
+    if (step > 0) {
+      for (let i = start; i <= limit; i += step) {
+        forEnv.set(node.name, i);
+        try {
+          this.execBlock(node.body.statements, forEnv);
+        } catch (e) {
+          if (e instanceof BreakSignal) break;
+          throw e;
+        }
+      }
+    } else if (step < 0) {
+      for (let i = start; i >= limit; i += step) {
+        forEnv.set(node.name, i);
+        try {
+          this.execBlock(node.body.statements, forEnv);
+        } catch (e) {
+          if (e instanceof BreakSignal) break;
+          throw e;
+        }
+      }
+    }
+  }
+
+  execGenericFor(node, env) {
+    const iterValues = this.evalExprList(node.iterators, env);
+    // The iterator should be a function, or the result of pairs/ipairs
+    let iterFunc, state, initVal;
+    if (iterValues.length >= 3) {
+      iterFunc = iterValues[0]; state = iterValues[1]; initVal = iterValues[2];
+    } else if (iterValues.length === 2) {
+      iterFunc = iterValues[0]; state = iterValues[1]; initVal = null;
+    } else {
+      iterFunc = iterValues[0]; state = null; initVal = null;
+    }
+    if (typeof iterFunc !== 'function') {
+      this.runtimeError("for-in iterator must be a function", node.line);
+    }
+    const forEnv = new Environment(env);
+    let lastKey = initVal;
+    while (true) {
+      const result = iterFunc(state, lastKey);
+      if (result === null || result === undefined) break;
+      // Handle multi-return
+      let vals;
+      if (Array.isArray(result) && result.__multi) {
+        vals = result;
+      } else {
+        vals = [result];
+      }
+      for (let i = 0; i < node.names.length; i++) {
+        forEnv.define(node.names[i], vals[i] !== undefined ? vals[i] : null);
+      }
+      lastKey = vals[0];
+      try {
+        this.execBlock(node.body.statements, forEnv);
+      } catch (e) {
+        if (e instanceof BreakSignal) break;
+        throw e;
+      }
+    }
+  }
+
+  // ---- Helpers ----
+  isTruthy(val) {
+    return val !== null && val !== false && val !== undefined;
+  }
+
+  luaType(val) {
+    if (val === null || val === undefined) return 'nil';
+    if (typeof val === 'number') return 'number';
+    if (typeof val === 'string') return 'string';
+    if (typeof val === 'boolean') return 'boolean';
+    if (typeof val === 'function') return 'function';
+    if (val && val.__luaFunc) return 'function';
+    if (Array.isArray(val) || (val && typeof val === 'object')) return 'table';
+    return typeof val;
+  }
+}
+
+// ============================================================
+// STANDARD LIBRARY
+// ============================================================
+function registerStdLib(env, interpreter, consoleEl) {
+  // -- print --
+  env.define('print', function(...args) {
+    const parts = args.map(a => {
+      if (a === null || a === undefined) return 'nil';
+      if (typeof a === 'boolean') return a ? 'true' : 'false';
+      if (typeof a === 'object' && a !== null) return JSON.stringify(a);
+      return String(a);
+    });
+    const line = document.createElement('div');
+    line.className = 'line output';
+    line.textContent = parts.join('\t');
+    consoleEl.appendChild(line);
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  });
+
+  // -- io.write --
+  env.define('io', {
+    write: function(...args) {
+      const parts = args.map(a => {
+        if (a === null || a === undefined) return 'nil';
+        if (typeof a === 'boolean') return a ? 'true' : 'false';
+        return String(a);
+      });
+      // Append to last console line or create new one
+      let lastLine = consoleEl.lastElementChild;
+      if (!lastLine || lastLine.dataset.ioWrite !== 'true') {
+        lastLine = document.createElement('div');
+        lastLine.className = 'line output';
+        lastLine.dataset.ioWrite = 'true';
+        consoleEl.appendChild(lastLine);
+      }
+      lastLine.textContent += parts.join('');
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+    },
+    flush: function() {}
+  });
+
+  // -- type --
+  env.define('type', function(val) {
+    return interpreter.luaType(val);
+  });
+
+  // -- tostring --
+  env.define('tostring', function(val) {
+    if (val === null || val === undefined) return 'nil';
+    if (typeof val === 'boolean') return val ? 'true' : 'false';
+    return String(val);
+  });
+
+  // -- tonumber --
+  env.define('tonumber', function(val) {
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string') {
+      const n = Number(val);
+      if (!isNaN(n)) return n;
+      return null;
+    }
+    return null;
+  });
+
+  // -- assert --
+  env.define('assert', function(val, msg) {
+    if (!interpreter.isTruthy(val)) {
+      interpreter.runtimeError(msg || 'assertion failed!', '?');
+    }
+    return val;
+  });
+
+  // -- error --
+  env.define('error', function(msg, level) {
+    level = level || 1;
+    const frameIdx = Math.max(0, interpreter.callStack.length - level);
+    const frame = interpreter.callStack[frameIdx] || {};
+    const line = frame.line || '?';
+    throw new LuaError(`[Line ${line}] ${msg || 'error'}`);
+  });
+
+  // -- pcall --
+  env.define('pcall', function(fn, ...args) {
+    try {
+      const result = interpreter.callFunction(fn, args, 0);
+      if (Array.isArray(result) && result.__multi) {
+        const r = [true, ...result]; r.__multi = true; return r;
+      }
+      const r = [true, result]; r.__multi = true; return r;
+    } catch (e) {
+      const msg = e instanceof LuaError ? e.message : String(e);
+      const r = [false, msg]; r.__multi = true; return r;
+    }
+  });
+
+  // -- select --
+  env.define('select', function(index, ...args) {
+    if (index === '#' || (typeof index === 'string' && index === '#')) {
+      return args.length;
+    }
+    const n = Number(index);
+    if (isNaN(n) || n < 1) return null;
+    return args.slice(n - 1);
+  });
+
+  // -- ipairs --
+  env.define('ipairs', function(t) {
+    let i = 0;
+    return function(table, prev) {
+      i++;
+      if (table[i] === undefined) return null;
+      const r = [i, table[i]]; r.__multi = true; return r;
+    }.bind(null, t);
+  });
+
+  // -- pairs --
+  env.define('pairs', function(t) {
+    const keys = [];
+    if (t && typeof t === 'object') {
+      // Get all keys: numeric first (sorted), then string
+      const numKeys = [];
+      const strKeys = [];
+      for (const k in t) {
+        if (k === '__metatable') continue;
+        const n = Number(k);
+        if (!isNaN(n) && n >= 1 && String(n) === k) {
+          numKeys.push(n);
+        } else {
+          strKeys.push(k);
+        }
+      }
+      numKeys.sort((a, b) => a - b);
+      keys.push(...numKeys.map(String), ...strKeys);
+    }
+    let idx = 0;
+    return function() {
+      if (idx >= keys.length) return null;
+      const key = keys[idx++];
+      // Convert numeric keys back to numbers
+      const numKey = Number(key);
+      const actualKey = (!isNaN(numKey) && String(numKey) === key) ? numKey : key;
+      const r = [actualKey, t[key]]; r.__multi = true; return r;
+    };
+  });
+
+  // -- setmetatable --
+  env.define('setmetatable', function(t, mt) {
+    if (t === null || t === undefined) interpreter.runtimeError("bad argument #1 to 'setmetatable' (table expected, got nil)", '?');
+    t.__metatable = mt;
+    return t;
+  });
+
+  // -- getmetatable --
+  env.define('getmetatable', function(t) {
+    if (t && t.__metatable) return t.__metatable;
+    return null;
+  });
+
+  // -- unpack / table.unpack --
+  env.define('unpack', function(t, i, j) {
+    i = i || 1;
+    j = j || Object.keys(t).filter(k => !isNaN(Number(k))).length;
+    const result = [];
+    for (let k = i; k <= j; k++) result.push(t[k] !== undefined ? t[k] : null);
+    if (result.length > 1) { result.__multi = true; }
+    return result.length === 1 ? result[0] : result;
+  });
+
+  // -- rawget / rawset --
+  env.define('rawget', function(t, k) { return t && t[k] !== undefined ? t[k] : null; });
+  env.define('rawset', function(t, k, v) { if (t) t[k] = v; return t; });
+
+  // -- next --
+  env.define('next', function(t, key) {
+    const keys = [];
+    for (const k in t) {
+      if (k === '__metatable') continue;
+      keys.push(k);
+    }
+    if (key === null || key === undefined) {
+      if (keys.length === 0) return null;
+      const k = keys[0];
+      const n = Number(k);
+      return [(!isNaN(n) && String(n) === k) ? n : k, t[k]];
+    }
+    const strKey = String(key);
+    const idx = keys.indexOf(strKey);
+    if (idx < 0 || idx + 1 >= keys.length) return null;
+    const nk = keys[idx + 1];
+    const n = Number(nk);
+    return [(!isNaN(n) && String(n) === nk) ? n : nk, t[nk]];
+  });
+
+  // -- math --
+  const mathLib = {
+    floor: Math.floor, ceil: Math.ceil, sqrt: Math.sqrt,
+    abs: Math.abs, sin: Math.sin, cos: Math.cos, tan: Math.tan,
+    asin: Math.asin, acos: Math.acos, atan: Math.atan, atan2: Math.atan2,
+    log: Math.log, exp: Math.exp,
+    pi: Math.PI, huge: Infinity,
+    max: function(...args) { return Math.max(...args.filter(a => typeof a === 'number')); },
+    min: function(...args) { return Math.min(...args.filter(a => typeof a === 'number')); },
+    pow: Math.pow,
+    random: function(m, n) {
+      if (m === undefined) return Math.random();
+      if (n === undefined) { m = Math.floor(m); return Math.floor(Math.random() * m) + 1; }
+      m = Math.floor(m); n = Math.floor(n);
+      return Math.floor(Math.random() * (n - m + 1)) + m;
+    },
+    randomseed: function() {},
+    fmod: function(x, y) { return x % y; },
+    modf: function(x) { return [Math.floor(x), x - Math.floor(x)]; },
+  };
+  env.define('math', mathLib);
+
+  // -- string --
+  const stringLib = {
+    len: function(s) { return String(s).length; },
+    upper: function(s) { return String(s).toUpperCase(); },
+    lower: function(s) { return String(s).toLowerCase(); },
+    sub: function(s, i, j) {
+      s = String(s);
+      if (i < 0) i = s.length + i + 1;
+      if (j === undefined || j === null) j = s.length;
+      if (j < 0) j = s.length + j + 1;
+      return s.substring(i - 1, j);
+    },
+    rep: function(s, n) { return String(s).repeat(n); },
+    reverse: function(s) { return String(s).split('').reverse().join(''); },
+    byte: function(s, i) { return String(s).charCodeAt((i || 1) - 1); },
+    char: function(...args) { return String.fromCharCode(...args); },
+    find: function(s, pattern, init, plain) {
+      s = String(s);
+      if (init) {
+        if (init < 0) init = s.length + init + 1;
+        s = s.substring(init - 1);
+      }
+      const idx = s.indexOf(pattern);
+      if (idx === -1) return null;
+      const start = idx + (init ? init - 1 : 0) + 1;
+      const multi = [start, start + pattern.length - 1]; multi.__multi = true;
+      return multi;
+    },
+    format: function(fmt, ...args) {
+      let argIdx = 0;
+      return String(fmt).replace(/%([%diouxXeEfgGcspq])/g, (match, spec) => {
+        if (spec === '%') return '%';
+        const val = args[argIdx++];
+        if (val === undefined) return match;
+        switch (spec) {
+          case 'd': case 'i': return Math.floor(Number(val));
+          case 'f': return Number(val).toFixed(6);
+          case 's': return String(val);
+          case 'x': return Math.floor(Number(val)).toString(16);
+          case 'X': return Math.floor(Number(val)).toString(16).toUpperCase();
+          case 'o': return Math.floor(Number(val)).toString(8);
+          case 'e': return Number(val).toExponential();
+          case 'E': return Number(val).toExponential().toUpperCase();
+          case 'g': return Number(val).toPrecision();
+          case 'G': return Number(val).toPrecision().toUpperCase();
+          case 'q': return '"' + String(val).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+          default: return match;
+        }
+      });
+    },
+    match: function(s, pattern) {
+      // Simplified: treat pattern as JS regex (no full Lua patterns)
+      try {
+        const m = String(s).match(new RegExp(pattern));
+        return m ? m[0] : null;
+      } catch { return null; }
+    },
+    gmatch: function(s, pattern) {
+      const str = String(s);
+      const re = new RegExp(pattern, 'g');
+      return function() {
+        const m = re.exec(str);
+        return m ? m[0] : null;
+      };
+    },
+    gsub: function(s, pattern, repl) {
+      return String(s).replace(new RegExp(pattern, 'g'), repl);
+    },
+  };
+  // String metatable methods
+  interpreter.stringLib = stringLib;
+  interpreter.stringMethods = {};
+  for (const [name, fn] of Object.entries(stringLib)) {
+    interpreter.stringMethods[name] = function(s, ...args) {
+      return fn(s, ...args);
+    };
+  }
+  // Special: s:len() etc - need to bind self (the string)
+  // We'll handle this in getField for strings
+
+  env.define('string', stringLib);
+
+  // -- table --
+  const tableLib = {
+    insert: function(t, posOrVal, val) {
+      if (val === undefined) {
+        // table.insert(t, val) — append
+        // Find next integer key
+        let maxKey = 0;
+        for (const k in t) {
+          const n = Number(k);
+          if (!isNaN(n) && n >= 1 && String(n) === k && n > maxKey) maxKey = n;
+        }
+        t[maxKey + 1] = posOrVal;
+      } else {
+        // table.insert(t, pos, val) — insert at position
+        const pos = posOrVal;
+        let maxKey = 0;
+        for (const k in t) {
+          const n = Number(k);
+          if (!isNaN(n) && n >= 1 && String(n) === k && n > maxKey) maxKey = n;
+        }
+        for (let i = maxKey; i >= pos; i--) {
+          t[i + 1] = t[i];
+        }
+        t[pos] = val;
+      }
+    },
+    remove: function(t, pos) {
+      let maxKey = 0;
+      for (const k in t) {
+        const n = Number(k);
+        if (!isNaN(n) && n >= 1 && String(n) === k && n > maxKey) maxKey = n;
+      }
+      if (pos === undefined) pos = maxKey;
+      const val = t[pos];
+      for (let i = pos; i < maxKey; i++) {
+        t[i] = t[i + 1];
+      }
+      t[maxKey] = undefined;
+      delete t[maxKey];
+      return val;
+    },
+    sort: function(t, comp) {
+      const arr = [];
+      let maxKey = 0;
+      for (const k in t) {
+        const n = Number(k);
+        if (!isNaN(n) && n >= 1 && String(n) === k && n > maxKey) maxKey = n;
+      }
+      for (let i = 1; i <= maxKey; i++) arr.push(t[i]);
+      if (comp) {
+        // comp is a Lua function, need to call it via interpreter
+        arr.sort((a, b) => {
+          const result = interpreter.callFunction(comp, [a, b], 0);
+          return result ? -1 : 1;
+        });
+      } else {
+        arr.sort((a, b) => {
+          if (typeof a === 'number' && typeof b === 'number') return a - b;
+          if (typeof a === 'string' && typeof b === 'string') return a < b ? -1 : a > b ? 1 : 0;
+          return 0;
+        });
+      }
+      for (let i = 0; i < arr.length; i++) t[i + 1] = arr[i];
+    },
+    concat: function(t, sep) {
+      sep = sep || '';
+      const arr = [];
+      let maxKey = 0;
+      for (const k in t) {
+        const n = Number(k);
+        if (!isNaN(n) && n >= 1 && String(n) === k && n > maxKey) maxKey = n;
+      }
+      for (let i = 1; i <= maxKey; i++) {
+        if (t[i] !== undefined) arr.push(String(t[i]));
+      }
+      return arr.join(sep);
+    },
+    pack: function(...args) {
+      const t = {};
+      for (let i = 0; i < args.length; i++) t[i + 1] = args[i];
+      t.n = args.length;
+      return t;
+    },
+    unpack: function(t, i, j) {
+      i = i || 1;
+      let maxKey = 0;
+      for (const k in t) {
+        const n = Number(k);
+        if (!isNaN(n) && n >= 1 && String(n) === k && n > maxKey) maxKey = n;
+      }
+      j = j || maxKey;
+      const result = [];
+      for (let k = i; k <= j; k++) result.push(t[k] !== undefined ? t[k] : null);
+      if (result.length > 1) { result.__multi = true; }
+      return result.length === 1 ? result[0] : result;
+    },
+  };
+  interpreter.tableLib = tableLib;
+  env.define('table', tableLib);
+
+  // -- os --
+  const startTime = performance.now();
+  env.define('os', {
+    clock: function() { return (performance.now() - startTime) / 1000; },
+    time: function() { return Math.floor(Date.now() / 1000); },
+  });
+
+  // -- rawequal --
+  env.define('rawequal', function(a, b) { return a === b; });
+
+  // -- collectgarbage (noop) --
+  env.define('collectgarbage', function() { return 0; });
+}
+
+// ============================================================
+// SYNTAX HIGHLIGHTING
+// ============================================================
+function highlightLua(code) {
+  // Escape HTML
+  let html = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const keywords = ['and','break','do','else','elseif','end','false','for','function','if','in','local','nil','not','or','repeat','return','then','true','until','while'];
+  const kwRe = new RegExp('\\b(' + keywords.join('|') + ')\\b', 'g');
+
+  // Process character by character to handle strings/comments properly
+  let result = '';
+  let i = 0;
+  while (i < html.length) {
+    // Comments -- (but not inside strings)
+    if (html[i] === '-' && html[i+1] === '-') {
+      let end = html.indexOf('\n', i);
+      if (end === -1) end = html.length;
+      result += '<span class="hl-comment">' + html.substring(i, end) + '</span>';
+      i = end;
+      continue;
+    }
+    // Strings
+    if (html[i] === '"' || html[i] === "'") {
+      const quote = html[i];
+      let j = i + 1;
+      while (j < html.length) {
+        if (html[j] === '\\') { j += 2; continue; }
+        if (html[j] === quote) { j++; break; }
+        if (html[j] === '\n') break;
+        j++;
+      }
+      result += '<span class="hl-string">' + html.substring(i, j) + '</span>';
+      i = j;
+      continue;
+    }
+    // Numbers
+    if (/[0-9]/.test(html[i]) && (i === 0 || /[\s+\-*/%^#<>=~(,;:\[{]/.test(html[i-1]))) {
+      let j = i;
+      if (html[j] === '0' && (html[j+1] === 'x' || html[j+1] === 'X')) {
+        j += 2;
+        while (j < html.length && /[0-9a-fA-F]/.test(html[j])) j++;
+      } else {
+        while (j < html.length && /[0-9]/.test(html[j])) j++;
+        if (j < html.length && html[j] === '.') { j++; while (j < html.length && /[0-9]/.test(html[j])) j++; }
+        if (j < html.length && (html[j] === 'e' || html[j] === 'E')) { j++; if (j < html.length && (html[j] === '+' || html[j] === '-')) j++; while (j < html.length && /[0-9]/.test(html[j])) j++; }
+      }
+      result += '<span class="hl-number">' + html.substring(i, j) + '</span>';
+      i = j;
+      continue;
+    }
+    // Keywords and identifiers
+    if (/[a-zA-Z_]/.test(html[i])) {
+      let j = i;
+      while (j < html.length && /[a-zA-Z0-9_]/.test(html[j])) j++;
+      const word = html.substring(i, j);
+      if (keywords.includes(word)) {
+        if (word === 'true' || word === 'false') {
+          result += '<span class="hl-boolean">' + word + '</span>';
+        } else if (word === 'nil') {
+          result += '<span class="hl-nil">' + word + '</span>';
+        } else {
+          result += '<span class="hl-keyword">' + word + '</span>';
+        }
+      } else {
+        result += word;
+      }
+      i = j;
+      continue;
+    }
+    // Operators
+    if ('+-*/%^#<>=~'.includes(html[i])) {
+      let op = html[i];
+      // Check multi-char
+      if (i + 1 < html.length) {
+        const two = html[i] + html[i+1];
+        if (['==','~=','<=','>=','..'].includes(two)) { op = two; }
+      }
+      result += '<span class="hl-operator">' + op + '</span>';
+      i += op.length;
+      continue;
+    }
+    result += html[i];
+    i++;
+  }
+  return result;
+}
+
+// ============================================================
+// UI WIRING
+// ============================================================
+const SAMPLE_SCRIPT = `-- Lunex Language Demo
+-- A mini Lua-style interpreter
+
+-- Fibonacci with memoization
+local memo = {}
+local function fib(n)
+  if n <= 1 then return n end
+  if memo[n] then return memo[n] end
+  memo[n] = fib(n-1) + fib(n-2)
+  return memo[n]
+end
+
+for i = 0, 10 do
+  io.write(fib(i) .. " ")
+end
+print()
+
+-- Tables as objects with metatables
+local Stack = {}
+Stack.__index = Stack
+
+function Stack.new()
+  return setmetatable({items = {}, size = 0}, Stack)
+end
+
+function Stack:push(v)
+  self.size = self.size + 1
+  self.items[self.size] = v
+end
+
+function Stack:pop()
+  if self.size == 0 then error("stack underflow") end
+  local v = self.items[self.size]
+  self.items[self.size] = nil
+  self.size = self.size - 1
+  return v
+end
+
+local s = Stack.new()
+s:push(10)
+s:push(20)
+s:push(30)
+print("Stack pop: " .. s:pop())
+print("Stack pop: " .. s:pop())
+
+-- Closures
+local function makeAdder(n)
+  return function(x) return x + n end
+end
+local add5 = makeAdder(5)
+print("add5(10) = " .. add5(10))
+print("add5(20) = " .. add5(20))
+
+-- Counter closure
+local function makeCounter()
+  local n = 0
+  return function()
+    n = n + 1
+    return n
+  end
+end
+local c = makeCounter()
+print("Counter: " .. c() .. " " .. c() .. " " .. c())
+
+-- String operations
+local words = {"the", "quick", "brown", "fox"}
+table.sort(words)
+print(table.concat(words, " "))
+
+-- Multiple return values
+local function minmax(a, b)
+  return math.min(a, b), math.max(a, b)
+end
+local lo, hi = minmax(3, 7)
+print("min=" .. lo .. " max=" .. hi)
+
+-- Variadic function
+local function sum(...)
+  local args = {...}
+  local total = 0
+  for i, v in ipairs(args) do total = total + v end
+  return total
+end
+print("sum(1,2,3,4,5) = " .. sum(1,2,3,4,5))
+
+-- pcall for error handling
+local ok, err = pcall(function()
+  error("intentional error")
+end)
+print("pcall ok=" .. tostring(ok) .. " err=" .. tostring(err))
+
+-- Table operations
+local t = {3, 1, 4, 1, 5, 9}
+table.sort(t)
+print("sorted: " .. table.concat(t, ", "))
+
+-- Iteration
+local person = {name = "Lunex", version = 1}
+for k, v in pairs(person) do
+  print(k .. " = " .. tostring(v))
+end
+
+print("--- Lunex ready ---")
+`;
+
+(function() {
+  const editorEl = document.getElementById('editor');
+  const highlightEl = document.getElementById('highlight');
+  const gutterEl = document.getElementById('gutter');
+  const consoleEl = document.getElementById('console');
+  const runBtn = document.getElementById('runBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const statusLeft = document.getElementById('statusLeft');
+
+  // Set sample
+  editorEl.value = SAMPLE_SCRIPT;
+
+  // Line numbers
+  function updateGutter() {
+    const lines = editorEl.value.split('\n');
+    gutterEl.innerHTML = lines.map((_, i) => `<div>${i + 1}</div>`).join('');
+  }
+
+  // Syntax highlighting
+  function updateHighlight() {
+    highlightEl.innerHTML = highlightLua(editorEl.value) + '\n';
+  }
+
+  function update() { updateGutter(); updateHighlight(); }
+  editorEl.addEventListener('input', update);
+  editorEl.addEventListener('scroll', () => {
+    highlightEl.scrollTop = editorEl.scrollTop;
+    highlightEl.scrollLeft = editorEl.scrollLeft;
+    gutterEl.scrollTop = editorEl.scrollTop;
+  });
+  update();
+
+  // Tab support
+  editorEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = editorEl.selectionStart;
+      const end = editorEl.selectionEnd;
+      editorEl.value = editorEl.value.substring(0, start) + '  ' + editorEl.value.substring(end);
+      editorEl.selectionStart = editorEl.selectionEnd = start + 2;
+      update();
+    }
+    if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault();
+      runCode();
+    }
+  });
+
+  // Clear console
+  clearBtn.addEventListener('click', () => {
+    consoleEl.innerHTML = '';
+  });
+
+  // Run button
+  runBtn.addEventListener('click', runCode);
+
+  function runCode() {
+    // Clear IO write marker
+    const ioLines = consoleEl.querySelectorAll('[data-io-write]');
+    ioLines.forEach(l => l.removeAttribute('data-io-write'));
+
+    const source = editorEl.value;
+    const startTime = performance.now();
+
+    try {
+      // 1. Lex
+      const lexer = new Lexer(source);
+      const tokens = lexer.tokenize();
+
+      // 2. Parse
+      const parser = new Parser(tokens);
+      const ast = parser.parse();
+
+      // 3. Setup environment
+      const globalEnv = new Environment();
+      const interpreter = new Interpreter();
+
+      // 4. Register stdlib
+      registerStdLib(globalEnv, interpreter, consoleEl);
+
+      // 5. Execute
+      interpreter.evaluate(ast, globalEnv);
+
+      const elapsed = (performance.now() - startTime).toFixed(2);
+      statusLeft.textContent = `Executed in ${elapsed}ms`;
+      statusLeft.className = 'status-executed';
+      setTimeout(() => { statusLeft.className = ''; statusLeft.textContent = 'Ready'; }, 3000);
+
+    } catch (e) {
+      const elapsed = (performance.now() - startTime).toFixed(2);
+      statusLeft.textContent = `Error after ${elapsed}ms`;
+      statusLeft.className = 'status-error';
+
+      const errLine = document.createElement('div');
+      errLine.className = 'line error';
+      if (e instanceof LuaError) {
+        errLine.textContent = e.message;
+      } else if (e instanceof Error) {
+        errLine.textContent = e.message;
+      } else {
+        errLine.textContent = String(e);
+      }
+      consoleEl.appendChild(errLine);
+      consoleEl.scrollTop = consoleEl.scrollHeight;
+
+      setTimeout(() => { statusLeft.className = ''; statusLeft.textContent = 'Ready'; }, 3000);
+    }
+  }
+})();
+</script>
+</body>
+</html>
