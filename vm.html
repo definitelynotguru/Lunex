@@ -462,7 +462,7 @@ body::after{
   </select>
   <div class="speed-control">
     <label for="speedSlider">Speed:</label>
-    <input type="range" id="speedSlider" min="1" max="1000" value="10">
+    <input type="range" id="speedSlider" min="1" max="1000" value="10" title="Execution speed (1–1000 Hz)">
     <span class="speed-value" id="speedValue">10 Hz</span>
   </div>
 </div>
@@ -1600,18 +1600,16 @@ function toggleBreakpoint(lineIdx) {
     editorState.breakpoints.add(lineIdx);
   }
   updateGutter();
+  resolveBreakpoints();
 }
 
 // Resolve breakpoints to CPU addresses after assembly
 function resolveBreakpoints() {
   cpu.breakpoints.clear();
   for (const lineIdx of editorState.breakpoints) {
-    // Find the address that maps to this line
-    for (let addr = 0; addr < editorState.lineAddrMap.length; addr++) {
-      if (editorState.lineAddrMap[addr] === lineIdx) {
-        cpu.breakpoints.add(addr);
-        break;
-      }
+    const addr = editorState.lineAddrMap[lineIdx];
+    if (addr !== undefined) {
+      cpu.breakpoints.add(addr);
     }
   }
 }
@@ -1779,6 +1777,364 @@ function updateDisplay() {
   const lineIdx = cpu.lineMap[pc] !== undefined ? cpu.lineMap[pc] : -1;
   highlightActiveLine(lineIdx);
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   DEMO PROGRAMS — Pre-loaded assembly programs
+   ═══════════════════════════════════════════════════════════════ */
+const DEMOS = {
+  fibonacci: `; Fibonacci Sequence
+; Outputs first 15 Fibonacci numbers
+; Uses A=prev, B=current, C=counter, D=temp
+;
+  LDI A, 0            ; prev = 0
+  LDI B, 1            ; current = 1
+  LDI C, 15           ; countdown counter
+
+loop:
+  MOV D, A            ; D = prev (save)
+  MOV A, B            ; A = current (for output)
+  INT 0x01            ; print current as decimal
+  MOV A, D            ; A = prev (restore)
+  MOV D, B            ; D = current (save before modifying B)
+  ADD B, A            ; B = current + prev (next fib)
+  MOV A, D            ; A = old current (new prev for next iteration)
+  DEC C               ; counter--
+  JNZ loop            ; continue until counter == 0
+  HLT                 ; done`,
+
+  bubble: `; Bubble Sort
+; Sorts a 4-byte array in memory (ascending order)
+; Array stored at addresses 0xC0-0xC3
+;
+  ; Initialize array: 4, 2, 3, 1
+  LDI A, 4
+  STA [0xC0], A
+  LDI A, 2
+  STA [0xC1], A
+  LDI A, 3
+  STA [0xC2], A
+  LDI A, 1
+  STA [0xC3], A
+
+  ; C = swapped flag, D = inner index
+  LDI C, 1            ; swapped = 1 (force first pass)
+
+outer:
+  MOV A, C            ; check if previous pass swapped
+  LDI C, 0            ; reset swapped = 0
+  LDI D, 0            ; inner index = 0
+
+inner:
+  ; Check if inner index < 3
+  LDI A, 3
+  CMP D, A
+  JZ chks             ; inner index == 3, check if swapped
+
+  ; Load arr[D] and arr[D+1]
+  LDI A, 0xC0
+  ADD A, D            ; A = &arr[D]
+  LDR B, [A]          ; B = arr[D]
+  INC A               ; A = &arr[D+1]
+  PUSH D              ; save inner index
+  LDR D, [A]          ; D = arr[D+1]
+
+  ; Compare: if B < D (arr[D] < arr[D+1]), already sorted
+  CMP B, D
+  JC skip             ; carry = B < D, no swap needed
+  JZ skip             ; zero = B == D, no swap needed
+
+  ; Swap: B=max, D=min, A=&arr[D+1]
+  STR [A], B          ; arr[D+1] = max (B)
+  DEC A
+  MOV B, D            ; B = min
+  STR [A], B          ; arr[D] = min
+  POP D               ; restore index
+  INC C               ; swapped = 1
+  INC D
+  JMP inner
+
+skip:
+  POP D               ; restore index
+  INC D
+  JMP inner
+
+chks:
+  MOV A, C            ; check swapped flag
+  LDI D, 0
+  LDI B, 0
+  CMP A, B            ; if swapped == 0, done
+  JNZ outer           ; otherwise do another pass
+
+done:
+  ; Output sorted array
+  LDI D, 0
+out:
+  LDI A, 0xC0
+  ADD A, D
+  LDR A, [A]          ; load value into A for INT output
+  INT 0x01
+  INC D
+  LDI A, 4
+  CMP D, A
+  JNZ out
+  HLT`,
+
+  reverse: `; String Reverse
+; Reverses "HELLO" using the stack
+; Pushes each character, then pops to output
+;
+  ; Push characters onto stack in order
+  LDI A, 72           ; 'H'
+  PUSH A
+  LDI A, 69           ; 'E'
+  PUSH A
+  LDI A, 76           ; 'L'
+  PUSH A
+  LDI A, 76           ; 'L'
+  PUSH A
+  LDI A, 79           ; 'O'
+  PUSH A
+
+  ; Pop and output in reverse order
+  LDI B, 5            ; counter = 5
+
+out:
+  POP A               ; pop top of stack
+  INT 0x02            ; print as character
+  DEC B               ; counter--
+  JNZ out             ; continue if counter != 0
+  HLT`,
+
+  countdown: `; Countdown Timer
+; Counts down from 10 to 1, outputs each value
+;
+  LDI A, 10           ; start value
+  LDI C, 0            ; zero for comparison
+
+count:
+  INT 0x01            ; output A as decimal
+  DEC A               ; A = A - 1
+  CMP A, C            ; compare with 0
+  JNZ count           ; continue until A == 0
+  HLT                 ; done`
+};
+
+/* ═══════════════════════════════════════════════════════════════
+   DEBUGGER CONTROLS — Run/Pause, Step, Reset, Assemble,
+   speed slider, keyboard shortcuts, breakpoint integration
+   ═══════════════════════════════════════════════════════════════ */
+
+// ── Execution state ──
+let executionInterval = null;
+let execSpeed = 10;
+let skipNextBreakpoint = false;
+
+// ── DOM references ──
+const assembleBtn = document.getElementById('assembleBtn');
+const runBtn = document.getElementById('runBtn');
+const stepBtn = document.getElementById('stepBtn');
+const resetBtn = document.getElementById('resetBtn');
+const speedSlider = document.getElementById('speedSlider');
+const speedValue = document.getElementById('speedValue');
+const execSpeedEl = document.getElementById('execSpeed');
+const demoSelect = document.getElementById('demoSelect');
+
+// ── Execute one tick (used by run loop) ──
+function execute() {
+  if (cpu.state !== 'running') {
+    stopExecution();
+    return;
+  }
+
+  // Check breakpoints (skip first tick after resume from breakpoint)
+  const pc = cpu.readRegister(cpu.REG_PC);
+  if (!skipNextBreakpoint && cpu.breakpoints.has(pc)) {
+    cpu.state = 'ready';
+    stopExecution();
+    updateDisplay();
+    updateRunButton();
+    return;
+  }
+  skipNextBreakpoint = false;
+
+  cpu.step();
+
+  if (cpu.state === 'halted' || cpu.state === 'error') {
+    stopExecution();
+    updateDisplay();
+    updateRunButton();
+    updateStatusBar();
+  }
+}
+
+// ── Start/stop continuous execution ──
+function startExecution() {
+  if (cpu.state !== 'ready') return;
+  cpu.state = 'running';
+  skipNextBreakpoint = false;
+  executionInterval = setInterval(execute, 1000 / execSpeed);
+  updateRunButton();
+  updateStatusBar();
+}
+
+function stopExecution() {
+  if (executionInterval) {
+    clearInterval(executionInterval);
+    executionInterval = null;
+  }
+}
+
+// ── Assemble current editor content ──
+function assembleCode() {
+  const source = editor.value;
+  stopExecution();
+  const result = assembler.assemble(source);
+
+  // Show errors in output console
+  if (result.errors.length > 0) {
+    cpu.output = [];
+    for (const err of result.errors) {
+      cpu.output.push('Line ' + err.line + ': ' + err.message);
+    }
+    cpu.state = 'error';
+    updateDisplay();
+    updateRunButton();
+    updateStatusBar();
+    return;
+  }
+
+  // Load assembled bytes into CPU
+  cpu.loadProgram(result.bytes, result.lineMap);
+
+  // Build source line → address map for breakpoints (first address of each line)
+  editorState.lineAddrMap = [];
+  for (let addr = 0; addr < result.lineMap.length; addr++) {
+    if (result.lineMap[addr] !== undefined && editorState.lineAddrMap[result.lineMap[addr]] === undefined) {
+      editorState.lineAddrMap[result.lineMap[addr]] = addr;
+    }
+  }
+
+  // Resolve breakpoints from editor to CPU addresses
+  resolveBreakpoints();
+
+  cpu.state = 'ready';
+  updateDisplay();
+  updateRunButton();
+  updateStatusBar();
+}
+
+// ── Step one instruction ──
+function stepInstruction() {
+  if (cpu.state !== 'ready') return;
+
+  // Check breakpoints (skip after resume)
+  const pc = cpu.readRegister(cpu.REG_PC);
+  if (!skipNextBreakpoint && cpu.breakpoints.has(pc)) {
+    skipNextBreakpoint = true;
+    updateDisplay();
+    return;
+  }
+  skipNextBreakpoint = false;
+
+  cpu.step();
+  updateDisplay();
+  updateRunButton();
+  updateStatusBar();
+}
+
+// ── Reset CPU state ──
+function resetCPU() {
+  stopExecution();
+  cpu.fullReset();
+  cpu.state = 'ready';
+  skipNextBreakpoint = false;
+  updateDisplay();
+  updateRunButton();
+  updateStatusBar();
+}
+
+// ── Update Run/Pause button label and styling ──
+function updateRunButton() {
+  if (cpu.state === 'running') {
+    runBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
+    runBtn.classList.add('primary');
+  } else {
+    runBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Run';
+    runBtn.classList.add('primary');
+  }
+}
+
+// ── Button event handlers ──
+assembleBtn.addEventListener('click', assembleCode);
+runBtn.addEventListener('click', function() {
+  if (cpu.state === 'running') {
+    stopExecution();
+    cpu.state = 'ready';
+    updateDisplay();
+    updateRunButton();
+    updateStatusBar();
+  } else if (cpu.state === 'ready') {
+    startExecution();
+  }
+});
+stepBtn.addEventListener('click', stepInstruction);
+resetBtn.addEventListener('click', resetCPU);
+
+// ── Speed slider ──
+speedSlider.addEventListener('input', function() {
+  execSpeed = Math.min(1000, Math.max(1, parseInt(speedSlider.value) || 10));
+  speedValue.textContent = execSpeed + ' Hz';
+  if (execSpeedEl) execSpeedEl.textContent = execSpeed + ' Hz';
+  if (executionInterval) {
+    clearInterval(executionInterval);
+    executionInterval = setInterval(execute, 1000 / execSpeed);
+  }
+});
+
+// ── Demo program selector ──
+demoSelect.addEventListener('change', function() {
+  const key = demoSelect.value;
+  if (DEMOS[key]) {
+    editor.value = DEMOS[key];
+    updateEditor();
+    resetCPU();
+    demoSelect.selectedIndex = 0;
+  }
+});
+
+// ── Keyboard shortcuts ──
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && e.ctrlKey) {
+    e.preventDefault();
+    assembleCode();
+    return;
+  }
+  if (e.key === 'r' && e.ctrlKey && !e.shiftKey) {
+    e.preventDefault();
+    if (cpu.state === 'running') {
+      stopExecution();
+      cpu.state = 'ready';
+      updateDisplay();
+      updateRunButton();
+      updateStatusBar();
+    } else if (cpu.state === 'ready') {
+      startExecution();
+    }
+    return;
+  }
+  if (e.key === '.' && e.ctrlKey) {
+    e.preventDefault();
+    stepInstruction();
+    return;
+  }
+  if ((e.key === 'R' || e.key === 'r') && e.ctrlKey && e.shiftKey) {
+    e.preventDefault();
+    resetCPU();
+    return;
+  }
+});
 </script>
 </body>
 </html>
