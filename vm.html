@@ -1029,6 +1029,7 @@ class CPU {
     if (this.readRegister(this.REG_SP) === 0x00) {
       this.state = 'error';
       this.error = 'Stack overflow';
+      this.output.push('ERROR: Stack overflow at tick ' + this.ticks);
     }
   }
 
@@ -1037,6 +1038,7 @@ class CPU {
     if (sp === 0xFF) {
       this.state = 'error';
       this.error = 'Stack underflow';
+      this.output.push('ERROR: Stack underflow at tick ' + this.ticks);
       return 0;
     }
     const value = this.readMemory(sp);
@@ -1195,6 +1197,7 @@ class CPU {
         if (b === 0) {
           this.state = 'error';
           this.error = 'Division by zero';
+          this.output.push('ERROR: Division by zero at tick ' + this.ticks);
           break;
         }
         const a = this.readRegister(rd);
@@ -1212,6 +1215,7 @@ class CPU {
         if (b === 0) {
           this.state = 'error';
           this.error = 'Division by zero (MOD)';
+          this.output.push('ERROR: Division by zero (MOD) at tick ' + this.ticks);
           break;
         }
         const a = this.readRegister(rd);
@@ -1403,8 +1407,12 @@ class CPU {
         // Unknown opcode — halt with error
         this.state = 'error';
         this.error = 'Unknown opcode: 0x' + opcode.toString(16).toUpperCase().padStart(2, '0');
+        this.output.push('ERROR: ' + this.error + ' at tick ' + this.ticks);
         break;
     }
+
+    // Update display after each step
+    if (typeof updateDisplay === 'function') updateDisplay();
   }
 
   /** Load assembled bytes into memory and set up line mapping. */
@@ -1414,11 +1422,13 @@ class CPU {
       this.memory[i] = assembledBytes[i];
     }
     this.lineMap = lineMap || [];
+    if (typeof updateDisplay === 'function') updateDisplay();
   }
 
   /** Full reset to initial state. */
   fullReset() {
     this.reset();
+    if (typeof updateDisplay === 'function') updateDisplay();
   }
 }
 
@@ -1658,6 +1668,117 @@ gutter.addEventListener('click', function(e) {
 
 // ── Initial render ──
 updateEditor();
+
+/* ═══════════════════════════════════════════════════════════════
+   STATE DISPLAY — Real-time register, flags, output, memory panels
+   ═══════════════════════════════════════════════════════════════ */
+
+const REG_NAMES = ['A', 'B', 'C', 'D', 'SP', 'PC'];
+
+/** Update the register panel: hex, binary, and proportional bar for each register. */
+function updateRegisters() {
+  const panel = document.querySelector('.reg-panel');
+  if (!panel) return;
+  let html = '<div class="panel-title">Registers</div>';
+  for (let i = 0; i < 6; i++) {
+    const val = cpu.readRegister(i);
+    const hex = '0x' + val.toString(16).toUpperCase().padStart(2, '0');
+    const bin = val.toString(2).padStart(8, '0');
+    const pct = ((val / 255) * 100).toFixed(1);
+    html += '<div class="reg-row">' +
+      '<span class="reg-name">' + REG_NAMES[i] + '</span>' +
+      '<span class="reg-hex">' + hex + '</span>' +
+      '<span class="reg-bin">' + bin + '</span>' +
+      '<div class="reg-bar-wrap"><div class="reg-bar" style="width:' + pct + '%"></div></div>' +
+      '</div>';
+  }
+  panel.innerHTML = html;
+}
+
+/** Update flag indicator dots — accent when lit, muted when dim. */
+function updateFlags() {
+  const FLAG_NAMES = ['Z', 'C', 'N', 'V'];
+  const dots = document.querySelectorAll('.flag-dot');
+  for (let i = 0; i < dots.length && i < 4; i++) {
+    const isLit = cpu.getFlag(i);
+    if (isLit) {
+      dots[i].classList.add('lit');
+    } else {
+      dots[i].classList.remove('lit');
+    }
+  }
+}
+
+/** Update the memory hex dump — 16 rows × 16 bytes, PC highlight, recent writes accent. */
+function updateMemoryDump() {
+  const container = document.getElementById('memoryDump');
+  if (!container) return;
+  const pc = cpu.readRegister(cpu.REG_PC);
+  let html = '<table><thead><tr><th></th>';
+  for (let c = 0; c < 16; c++) {
+    html += '<th>' + c.toString(16).toUpperCase().padStart(2, '0') + '</th>';
+  }
+  html += '</tr></thead><tbody>';
+  for (let row = 0; row < 16; row++) {
+    const addr = row * 16;
+    html += '<tr><td class="addr">0x' + addr.toString(16).toUpperCase().padStart(2, '0') + '</td>';
+    for (let col = 0; col < 16; col++) {
+      const a = addr + col;
+      const v = cpu.readMemory(a);
+      let cls = '';
+      if (a === pc) cls = 'pc-highlight';
+      else if (cpu.recentWrites[a]) cls = 'recent-write';
+      html += '<td' + (cls ? ' class="' + cls + '"' : '') + '>' +
+        v.toString(16).toUpperCase().padStart(2, '0') + '</td>';
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+/** Update the output console — numbered lines, error lines in red. */
+function updateOutput() {
+  const container = document.getElementById('outputConsole');
+  if (!container) return;
+  if (cpu.output.length === 0) {
+    container.innerHTML = '<div class="placeholder">Output will appear here after execution...</div>';
+    return;
+  }
+  let html = '';
+  for (let i = 0; i < cpu.output.length; i++) {
+    const isError = typeof cpu.output[i] === 'string' && cpu.output[i].startsWith('ERROR:');
+    html += '<div class="line' + (isError ? ' error' : '') + '">' +
+      (i + 1) + ': ' + escapeHtml(String(cpu.output[i])) + '</div>';
+  }
+  container.innerHTML = html;
+  container.scrollTop = container.scrollHeight;
+}
+
+/** Update status bar: status text, indicator dot class, tick counter. */
+function updateStatusBar() {
+  const statusText = document.getElementById('statusText');
+  const statusIndicator = document.getElementById('statusIndicator');
+  const tickCounter = document.getElementById('tickCounter');
+  if (statusText) statusText.textContent = cpu.state.charAt(0).toUpperCase() + cpu.state.slice(1);
+  if (statusIndicator) {
+    statusIndicator.className = 'status-indicator ' + cpu.state;
+  }
+  if (tickCounter) tickCounter.textContent = 'Tick: ' + cpu.ticks;
+}
+
+/** Master display update — refreshes all state panels from current CPU state. */
+function updateDisplay() {
+  updateRegisters();
+  updateFlags();
+  updateMemoryDump();
+  updateOutput();
+  updateStatusBar();
+  // Highlight current instruction line in editor
+  const pc = cpu.readRegister(cpu.REG_PC);
+  const lineIdx = cpu.lineMap[pc] !== undefined ? cpu.lineMap[pc] : -1;
+  highlightActiveLine(lineIdx);
+}
 </script>
 </body>
 </html>
