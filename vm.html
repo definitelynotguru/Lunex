@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lunex VM — 8-bit CPU Emulator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#111113;--surface:#19191b;--surface-raised:#1e1e21;
+  --border:rgba(255,255,255,0.06);--border-active:rgba(255,255,255,0.12);
+  --text:#e4e4e7;--text-secondary:#a1a1aa;--text-muted:#52525b;
+  --accent:#34d399;--accent-dim:rgba(52,211,153,0.15);--accent-border:rgba(52,211,153,0.3);
+  --red:#f87171;--red-dim:rgba(248,113,113,0.12);
+  --amber:#fbbf24;--amber-dim:rgba(251,191,36,0.12);
+  --sky:#38bdf8;--sky-dim:rgba(56,189,248,0.12);
+  --font:'Geist Mono','JetBrains Mono','SF Mono','Cascadia Code','Fira Code',monospace;
+  --font-ui:'Geist Mono',system-ui,sans-serif;
+  --radius:10px;--radius-sm:6px;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--font)}
+body{
+  display:flex;flex-direction:column;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+}
+/* noise overlay */
+body::after{
+  content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  opacity:0.6;
+}
+/* ── TITLEBAR ── */
+#titlebar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 24px;height:52px;
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  z-index:10;flex-shrink:0;
+}
+.brand{display:flex;align-items:center;gap:12px}
+.brand h1{
+  font-size:15px;font-weight:600;letter-spacing:0.08em;
+  color:var(--text);
+}
+.brand h1 span{color:var(--accent);font-weight:700}
+.version-tag{
+  font-size:10px;font-weight:500;letter-spacing:0.06em;
+  color:var(--text-muted);padding:2px 8px;
+  border:1px solid var(--border);border-radius:999px;
+  text-transform:uppercase;
+}
+.controls{display:flex;gap:6px;align-items:center}
+.kbd{
+  font-size:10px;font-weight:500;letter-spacing:0.04em;
+  color:var(--text-muted);padding:2px 6px;
+  border:1px solid var(--border);border-radius:4px;
+  background:rgba(255,255,255,0.02);
+  font-family:var(--font);
+}
+.btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:0 14px;height:32px;border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface-raised);color:var(--text-secondary);
+  cursor:pointer;font-family:var(--font-ui);font-size:12px;font-weight:500;
+  letter-spacing:0.02em;
+  transition:all 0.2s cubic-bezier(0.16,1,0.3,1);
+  user-select:none;
+}
+.btn:hover{
+  background:rgba(255,255,255,0.04);
+  border-color:var(--border-active);
+  color:var(--text);
+}
+.btn:active{transform:translateY(1px) scale(0.98)}
+.btn.primary{
+  background:var(--accent-dim);border-color:var(--accent-border);color:var(--accent);
+}
+.btn.primary:hover{
+  background:rgba(52,211,153,0.22);
+  box-shadow:0 0 0 1px var(--accent-border),inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.btn.danger{
+  background:transparent;border-color:var(--border);
+  color:var(--text-muted);
+}
+.btn.danger:hover{
+  background:var(--red-dim);border-color:rgba(248,113,113,0.25);color:var(--red);
+}
+.btn svg{width:14px;height:14px;stroke-width:2}
+/* ── MAIN LAYOUT ── */
+#main{display:flex;flex:1;overflow:hidden;padding:10px;gap:10px}
+/* ── PANE ── */
+.pane{
+  flex:1;display:flex;flex-direction:column;
+  border:1px solid var(--border);
+  border-radius:var(--radius);overflow:hidden;
+  background:var(--surface);
+  box-shadow:0 1px 3px rgba(0,0,0,0.2),0 8px 24px rgba(0,0,0,0.15);
+}
+.pane-header{
+  padding:0 16px;height:36px;
+  font-size:11px;font-weight:500;letter-spacing:0.08em;
+  text-transform:uppercase;color:var(--text-muted);
+  border-bottom:1px solid var(--border);
+  background:rgba(255,255,255,0.01);
+  display:flex;align-items:center;gap:10px;
+  flex-shrink:0;
+}
+.pane-header .indicator{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--accent);
+  box-shadow:0 0 6px var(--accent-dim);
+  animation:breath 3s ease-in-out infinite;
+}
+@keyframes breath{0%,100%{opacity:0.7}50%{opacity:1}}
+.pane-header .indicator.amber{background:var(--amber);box-shadow:0 0 6px var(--amber-dim)}
+/* ── EDITOR PANE ── */
+#editorPane{flex:1.2}
+.editor-wrap{flex:1;position:relative;overflow:hidden}
+#gutter{
+  position:absolute;left:0;top:0;bottom:0;width:52px;
+  background:rgba(0,0,0,0.15);
+  border-right:1px solid var(--border);
+  padding:14px 8px 14px 0;text-align:right;
+  font-size:13px;line-height:21px;
+  color:var(--text-muted);
+  overflow:hidden;z-index:2;user-select:none;
+  font-family:var(--font);font-weight:400;
+}
+#gutter .line-num{
+  cursor:pointer;padding:0 4px;
+  transition:color 0.15s;
+}
+#gutter .line-num:hover{color:var(--text)}
+#gutter .line-num.breakpoint{color:var(--red)}
+#gutter .line-num.breakpoint::before{
+  content:'';display:inline-block;width:8px;height:8px;
+  border-radius:50%;background:var(--red);
+  margin-right:4px;vertical-align:middle;
+  box-shadow:0 0 6px rgba(248,113,113,0.4);
+}
+#highlight{
+  position:absolute;left:52px;top:0;right:0;bottom:0;
+  padding:14px 14px 14px 16px;
+  font-size:13px;line-height:21px;
+  font-family:var(--font);font-weight:400;
+  white-space:pre;overflow:auto;z-index:1;
+  color:var(--text);pointer-events:none;
+}
+#editor{
+  position:absolute;left:52px;top:0;right:0;bottom:0;
+  padding:14px 14px 14px 16px;
+  font-size:13px;line-height:21px;
+  font-family:var(--font);font-weight:400;
+  background:transparent;border:none;outline:none;
+  resize:none;color:transparent;
+  caret-color:var(--accent);
+  z-index:3;overflow:auto;white-space:pre;
+  tab-size:2;-moz-tab-size:2;
+  width:calc(100% - 52px);
+}
+#editor::selection{background:rgba(52,211,153,0.18)}
+/* current instruction highlight */
+.line-active{
+  background:rgba(52,211,153,0.08);
+  border-left:2px solid var(--accent);
+  display:block;margin:0 -16px 0 -2px;padding:0 14px 0 0;
+}
+/* ── STATE PANE ── */
+#statePane{flex:1}
+#stateContent{
+  flex:1;overflow:auto;padding:12px 14px;
+  display:flex;flex-direction:column;gap:14px;
+}
+/* ── REGISTERS ── */
+.reg-panel .panel-title{
+  font-size:10px;font-weight:600;letter-spacing:0.1em;
+  text-transform:uppercase;color:var(--text-muted);
+  margin-bottom:8px;
+}
+.reg-row{
+  display:flex;align-items:center;gap:10px;
+  padding:3px 0;font-size:12px;
+}
+.reg-name{
+  width:28px;font-weight:600;color:var(--text-secondary);
+  font-size:11px;letter-spacing:0.04em;
+}
+.reg-hex{color:var(--text);font-weight:500;min-width:44px}
+.reg-bin{color:var(--text-muted);font-size:11px;min-width:72px}
+.reg-bar-wrap{
+  flex:1;height:4px;background:rgba(255,255,255,0.04);
+  border-radius:2px;overflow:hidden;
+}
+.reg-bar{
+  height:100%;background:var(--accent);border-radius:2px;
+  transition:width 0.15s ease;
+  box-shadow:0 0 8px var(--accent-dim);
+}
+/* ── FLAGS ── */
+.flags-panel{display:flex;gap:12px;align-items:center}
+.flag-dot{
+  display:flex;align-items:center;gap:4px;
+  font-size:11px;font-weight:600;letter-spacing:0.04em;
+  color:var(--text-muted);
+}
+.flag-dot .dot{
+  width:10px;height:10px;border-radius:50%;
+  background:rgba(255,255,255,0.06);
+  border:1px solid var(--border);
+  transition:all 0.2s ease;
+}
+.flag-dot.lit .dot{
+  background:var(--accent);
+  border-color:var(--accent-border);
+  box-shadow:0 0 8px var(--accent-dim);
+}
+.flag-dot.lit{color:var(--accent)}
+/* ── OUTPUT CONSOLE ── */
+.output-console{
+  border:1px solid var(--border);border-radius:var(--radius-sm);
+  background:rgba(0,0,0,0.2);overflow:auto;
+  font-size:12px;line-height:20px;
+  font-family:var(--font);font-weight:400;
+  min-height:80px;max-height:160px;
+}
+.output-console .line{padding:2px 10px;color:var(--text)}
+.output-console .line.error{
+  color:var(--red);padding:4px 8px;margin:2px 4px;
+  background:var(--red-dim);border-radius:4px;
+  border-left:2px solid rgba(248,113,113,0.4);
+}
+.output-console .placeholder{
+  color:var(--text-muted);font-style:italic;padding:8px 10px;
+}
+/* ── MEMORY HEX DUMP ── */
+.memory-dump{
+  font-size:11px;line-height:18px;
+  font-family:var(--font);font-weight:400;
+  overflow:auto;max-height:200px;
+}
+.memory-dump table{border-collapse:collapse;width:100%}
+.memory-dump th{
+  color:var(--text-muted);font-weight:500;
+  padding:2px 4px;text-align:center;
+  font-size:10px;letter-spacing:0.04em;
+  position:sticky;top:0;background:var(--surface);
+}
+.memory-dump td{
+  padding:1px 4px;text-align:center;
+  color:var(--text-secondary);
+  font-size:11px;
+}
+.memory-dump td.pc-highlight{
+  background:var(--accent-dim);color:var(--accent);
+  border-radius:2px;font-weight:600;
+}
+.memory-dump td.recent-write{
+  color:var(--accent);
+}
+.memory-dump .addr{
+  color:var(--text-muted);font-weight:500;
+  padding-right:8px;text-align:right;
+}
+/* ── DEMO BAR ── */
+#demoBar{
+  display:flex;align-items:center;gap:12px;
+  padding:8px 24px;
+  background:var(--surface);
+  border-top:1px solid var(--border);
+  flex-shrink:0;
+}
+#demoBar label{
+  font-size:11px;color:var(--text-muted);
+  letter-spacing:0.04em;font-weight:500;
+}
+#demoBar select{
+  background:var(--surface-raised);color:var(--text-secondary);
+  border:1px solid var(--border);border-radius:var(--radius-sm);
+  padding:4px 10px;height:28px;
+  font-family:var(--font-ui);font-size:12px;
+  cursor:pointer;outline:none;
+  transition:border-color 0.2s;
+}
+#demoBar select:hover{border-color:var(--border-active)}
+#demoBar select:focus{border-color:var(--accent-border)}
+.speed-control{
+  display:flex;align-items:center;gap:8px;
+  margin-left:auto;
+}
+.speed-control label{font-size:11px;color:var(--text-muted)}
+.speed-control input[type="range"]{
+  width:100px;height:4px;
+  -webkit-appearance:none;appearance:none;
+  background:rgba(255,255,255,0.08);border-radius:2px;
+  outline:none;cursor:pointer;
+}
+.speed-control input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;
+  width:12px;height:12px;border-radius:50%;
+  background:var(--accent);cursor:pointer;
+  box-shadow:0 0 6px var(--accent-dim);
+}
+.speed-value{
+  font-size:11px;color:var(--accent);
+  min-width:52px;text-align:right;
+  font-weight:500;
+}
+/* ── STATUS BAR ── */
+#statusbar{
+  padding:0 24px;height:28px;
+  font-size:11px;color:var(--text-muted);
+  background:var(--surface);border-top:1px solid var(--border);
+  display:flex;justify-content:space-between;align-items:center;
+  font-family:var(--font);letter-spacing:0.03em;
+  flex-shrink:0;
+}
+#statusbar .status-left{display:flex;gap:16px;align-items:center}
+#statusbar .status-right{display:flex;gap:16px;align-items:center}
+.status-indicator{
+  display:inline-flex;align-items:center;gap:5px;
+}
+.status-indicator .dot{
+  width:6px;height:6px;border-radius:50%;
+  background:var(--accent);
+  box-shadow:0 0 4px var(--accent-dim);
+}
+.status-indicator.halted .dot{background:var(--amber);box-shadow:0 0 4px var(--amber-dim)}
+.status-indicator.error .dot{background:var(--red);box-shadow:0 0 4px rgba(248,113,113,0.3)}
+.status-indicator.running .dot{animation:pulse 0.8s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+/* ── ASSEMBLY SYNTAX HIGHLIGHTING ── */
+.hl-mnemonic{color:#c4b5fd;font-weight:600}
+.hl-register{color:#38bdf8}
+.hl-number{color:#7dd3fc}
+.hl-label{color:#fdba74}
+.hl-comment{color:#52525b;font-style:italic}
+.hl-directive{color:#f9a8d4}
+.hl-string{color:#6ee7b7}
+.hl-system{color:#fbbf24}
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.15)}
+/* ── RESPONSIVE ── */
+@media(max-width:768px){
+  #main{flex-direction:column;padding:6px;gap:6px}
+  .pane{min-height:40vh}
+  #titlebar{padding:0 14px}
+  .version-tag,.kbd{display:none}
+  #demoBar{padding:8px 14px;flex-wrap:wrap}
+  .speed-control{margin-left:0}
+  #statusbar{padding:0 14px}
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ TITLEBAR ═══ -->
+<div id="titlebar">
+  <div class="brand">
+    <h1><span>Lunex</span> VM</h1>
+    <span class="version-tag">v0.1</span>
+  </div>
+  <div class="controls">
+    <span class="kbd">Ctrl+Enter</span>
+    <button class="btn primary" id="assembleBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      Assemble
+    </button>
+    <button class="btn primary" id="runBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Run
+    </button>
+    <button class="btn" id="stepBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      Step
+    </button>
+    <button class="btn danger" id="resetBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+      Reset
+    </button>
+  </div>
+</div>
+
+<!-- ═══ MAIN ═══ -->
+<div id="main">
+
+  <!-- EDITOR PANE -->
+  <div class="pane" id="editorPane">
+    <div class="pane-header"><span class="indicator"></span> Assembly Editor</div>
+    <div class="editor-wrap">
+      <div id="gutter"></div>
+      <pre id="highlight"></pre>
+      <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" placeholder="; Write assembly code here...&#10;  LDI A, 42&#10;  INT 0x01&#10;  HLT"></textarea>
+    </div>
+  </div>
+
+  <!-- STATE PANE -->
+  <div class="pane" id="statePane">
+    <div class="pane-header"><span class="indicator amber"></span> CPU State</div>
+    <div id="stateContent">
+
+      <!-- Registers -->
+      <div class="reg-panel">
+        <div class="panel-title">Registers</div>
+        <div class="reg-row"><span class="reg-name">A</span><span class="reg-hex">0x00</span><span class="reg-bin">00000000</span><div class="reg-bar-wrap"><div class="reg-bar" style="width:0%"></div></div></div>
+        <div class="reg-row"><span class="reg-name">B</span><span class="reg-hex">0x00</span><span class="reg-bin">00000000</span><div class="reg-bar-wrap"><div class="reg-bar" style="width:0%"></div></div></div>
+        <div class="reg-row"><span class="reg-name">C</span><span class="reg-hex">0x00</span><span class="reg-bin">00000000</span><div class="reg-bar-wrap"><div class="reg-bar" style="width:0%"></div></div></div>
+        <div class="reg-row"><span class="reg-name">D</span><span class="reg-hex">0x00</span><span class="reg-bin">00000000</span><div class="reg-bar-wrap"><div class="reg-bar" style="width:0%"></div></div></div>
+        <div class="reg-row"><span class="reg-name">SP</span><span class="reg-hex">0xFF</span><span class="reg-bin">11111111</span><div class="reg-bar-wrap"><div class="reg-bar" style="width:100%"></div></div></div>
+        <div class="reg-row"><span class="reg-name">PC</span><span class="reg-hex">0x00</span><span class="reg-bin">00000000</span><div class="reg-bar-wrap"><div class="reg-bar" style="width:0%"></div></div></div>
+      </div>
+
+      <!-- Flags -->
+      <div class="reg-panel">
+        <div class="panel-title">Flags</div>
+        <div class="flags-panel">
+          <div class="flag-dot"><span class="dot"></span>Z</div>
+          <div class="flag-dot"><span class="dot"></span>C</div>
+          <div class="flag-dot"><span class="dot"></span>N</div>
+          <div class="flag-dot"><span class="dot"></span>V</div>
+        </div>
+      </div>
+
+      <!-- Output Console -->
+      <div class="reg-panel">
+        <div class="panel-title">Output</div>
+        <div class="output-console" id="outputConsole">
+          <div class="placeholder">Output will appear here after execution...</div>
+        </div>
+      </div>
+
+      <!-- Memory Hex Dump -->
+      <div class="reg-panel">
+        <div class="panel-title">Memory</div>
+        <div class="memory-dump" id="memoryDump">
+          <div class="placeholder">Memory contents will appear after assembly...</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══ DEMO BAR ═══ -->
+<div id="demoBar">
+  <label for="demoSelect">Demo:</label>
+  <select id="demoSelect">
+    <option value="">Select a demo program...</option>
+    <option value="fibonacci">Fibonacci</option>
+    <option value="bubble">Bubble Sort</option>
+    <option value="reverse">String Reverse</option>
+    <option value="countdown">Countdown</option>
+  </select>
+  <div class="speed-control">
+    <label for="speedSlider">Speed:</label>
+    <input type="range" id="speedSlider" min="1" max="1000" value="10">
+    <span class="speed-value" id="speedValue">10 Hz</span>
+  </div>
+</div>
+
+<!-- ═══ STATUS BAR ═══ -->
+<div id="statusbar">
+  <div class="status-left">
+    <div class="status-indicator" id="statusIndicator">
+      <span class="dot"></span>
+      <span id="statusText">Ready</span>
+    </div>
+    <span id="tickCounter">Tick: 0</span>
+  </div>
+  <div class="status-right">
+    <span id="execSpeed">10 Hz</span>
+    <span>Lunex VM v0.1</span>
+  </div>
+</div>
+
+<script>
+"use strict";
+// Lunex VM — Placeholder: CPU, Assembler, and UI logic will be added in subsequent features.
+</script>
+</body>
+</html>
