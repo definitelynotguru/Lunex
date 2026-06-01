@@ -342,6 +342,7 @@ body::after{
 .hl-directive{color:#f9a8d4}
 .hl-string{color:#6ee7b7}
 .hl-system{color:#fbbf24}
+.hl-line{min-height:21px}
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -365,7 +366,7 @@ body::after{
 <div id="titlebar">
   <div class="brand">
     <h1><span>Lunex</span> VM</h1>
-    <span class="version-tag">v0.1</span>
+    <span class="version-tag">v1.0</span>
   </div>
   <div class="controls">
     <span class="kbd">Ctrl+Enter</span>
@@ -477,7 +478,7 @@ body::after{
   </div>
   <div class="status-right">
     <span id="execSpeed">10 Hz</span>
-    <span>Lunex VM v0.1</span>
+    <span>Lunex VM v1.0</span>
   </div>
 </div>
 
@@ -1425,7 +1426,238 @@ class CPU {
 const cpu = new CPU();
 const assembler = new Assembler();
 
-// Lunex VM — UI wiring will be added in subsequent features.
+/* ═══════════════════════════════════════════════════════════════
+   ASSEMBLY EDITOR UI — Syntax highlighting, gutter, breakpoints,
+   scroll sync, current-instruction highlight, Tab handling
+   ═══════════════════════════════════════════════════════════════ */
+
+// ── DOM references ──
+const editor = document.getElementById('editor');
+const highlight = document.getElementById('highlight');
+const gutter = document.getElementById('gutter');
+
+// ── Editor state ──
+const editorState = {
+  breakpoints: new Set(),     // line indices with breakpoints
+  lineAddrMap: [],            // source line index → address (from assembler)
+  activeLine: -1              // currently highlighted instruction line (-1 = none)
+};
+
+// ── MNEMONICS lookup for syntax highlighting ──
+const HL_MNEMONICS = new Set(Object.keys(assembler.instructions));
+
+// ── Syntax highlighting: single line ──
+function highlightLine(text) {
+  let result = '';
+  let i = 0;
+  const len = text.length;
+
+  // Leading whitespace — emit as-is
+  while (i < len && text[i] === ' ') {
+    result += ' ';
+    i++;
+  }
+
+  // Check for label (at start of line after whitespace)
+  const labelRe = /^([A-Za-z_]\w*)(\s*:\s*)?/g;
+  labelRe.lastIndex = i;
+  const labelMatch = labelRe.exec(text);
+  if (labelMatch && labelMatch[2]) {
+    // Label definition: "word:" at start
+    result += '<span class="hl-label">' + escapeHtml(labelMatch[1]) + '</span>' +
+              escapeHtml(labelMatch[2]);
+    i += labelMatch[0].length;
+  }
+
+  // Tokenize rest of line
+  while (i < len) {
+    // Skip spaces
+    if (text[i] === ' ') {
+      let spaces = '';
+      while (i < len && text[i] === ' ') { spaces += ' '; i++; }
+      result += spaces;
+      continue;
+    }
+
+    // Comments: ; ...
+    if (text[i] === ';') {
+      result += '<span class="hl-comment">' + escapeHtml(text.slice(i)) + '</span>';
+      i = len;
+      continue;
+    }
+
+    // Try multi-char tokens
+    const rest = text.slice(i);
+    let matched = false;
+
+    // Strings: "..."
+    if (text[i] === '"') {
+      const m = rest.match(/^"[^"]*"/);
+      if (m) {
+        result += '<span class="hl-string">' + escapeHtml(m[0]) + '</span>';
+        i += m[0].length;
+        matched = true;
+      }
+    }
+
+    // Numbers: hex, binary, decimal
+    if (!matched) {
+      const m = rest.match(/^(0[xX][0-9a-fA-F]+|0[bB][01]+|-?\d+)/);
+      if (m) {
+        result += '<span class="hl-number">' + escapeHtml(m[0]) + '</span>';
+        i += m[0].length;
+        matched = true;
+      }
+    }
+
+    // Words: directives, system, mnemonics, registers
+    if (!matched) {
+      const m = rest.match(/^[A-Za-z_]\w*/);
+      if (m) {
+        const word = m[0];
+        const upper = word.toUpperCase();
+        if (/^(DB|DW|DS)$/i.test(word)) {
+          result += '<span class="hl-directive">' + escapeHtml(word) + '</span>';
+        } else if (/^(INT|OUT)$/i.test(word)) {
+          result += '<span class="hl-system">' + escapeHtml(word) + '</span>';
+        } else if (HL_MNEMONICS.has(upper)) {
+          result += '<span class="hl-mnemonic">' + escapeHtml(word) + '</span>';
+        } else if (assembler.regPattern.test(word)) {
+          result += '<span class="hl-register">' + escapeHtml(word) + '</span>';
+        } else {
+          result += escapeHtml(word);
+        }
+        i += word.length;
+        matched = true;
+      }
+    }
+
+    // Anything else — emit as plain text
+    if (!matched) {
+      result += escapeHtml(text[i]);
+      i++;
+    }
+  }
+
+  return result;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ── Full highlight update ──
+function updateHighlight() {
+  const lines = editor.value.split('\n');
+  let html = '';
+  for (let i = 0; i < lines.length; i++) {
+    html += '<div class="hl-line' + (i === editorState.activeLine ? ' line-active' : '') + '">' +
+            highlightLine(lines[i]) + '</div>\n';
+  }
+  highlight.innerHTML = html;
+}
+
+// ── Gutter update ──
+function updateGutter() {
+  const lineCount = editor.value.split('\n').length;
+  let html = '';
+  for (let i = 0; i < lineCount; i++) {
+    html += '<div class="line-num' +
+            (editorState.breakpoints.has(i) ? ' breakpoint' : '') +
+            '">' + (i + 1) + '</div>';
+  }
+  gutter.innerHTML = html;
+}
+
+// ── Combined update ──
+function updateEditor() {
+  updateHighlight();
+  updateGutter();
+}
+
+// ── Scroll synchronization ──
+function syncScroll() {
+  highlight.scrollTop = editor.scrollTop;
+  highlight.scrollLeft = editor.scrollLeft;
+  gutter.scrollTop = editor.scrollTop;
+}
+
+// ── Breakpoint toggle (by line index) ──
+function toggleBreakpoint(lineIdx) {
+  if (editorState.breakpoints.has(lineIdx)) {
+    editorState.breakpoints.delete(lineIdx);
+  } else {
+    editorState.breakpoints.add(lineIdx);
+  }
+  updateGutter();
+}
+
+// Resolve breakpoints to CPU addresses after assembly
+function resolveBreakpoints() {
+  cpu.breakpoints.clear();
+  for (const lineIdx of editorState.breakpoints) {
+    // Find the address that maps to this line
+    for (let addr = 0; addr < editorState.lineAddrMap.length; addr++) {
+      if (editorState.lineAddrMap[addr] === lineIdx) {
+        cpu.breakpoints.add(addr);
+        break;
+      }
+    }
+  }
+}
+
+// ── Current-instruction highlight ──
+function highlightActiveLine(lineIdx) {
+  editorState.activeLine = lineIdx;
+  // Direct DOM update for performance (avoids full re-highlight)
+  const lineEls = highlight.querySelectorAll('.hl-line');
+  for (let i = 0; i < lineEls.length; i++) {
+    if (i === lineIdx) {
+      lineEls[i].classList.add('line-active');
+    } else {
+      lineEls[i].classList.remove('line-active');
+    }
+  }
+  // Ensure the active line is visible in the gutter
+  const gutterLines = gutter.querySelectorAll('.line-num');
+  if (lineIdx >= 0 && lineIdx < gutterLines.length) {
+    // Keep gutter highlight in sync
+    for (let i = 0; i < gutterLines.length; i++) {
+      gutterLines[i].style.background = i === lineIdx ? 'rgba(52,211,153,0.08)' : '';
+    }
+  }
+}
+
+// ── Tab key handler ──
+function handleTab(e) {
+  e.preventDefault();
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  editor.value = editor.value.substring(0, start) + '  ' + editor.value.substring(end);
+  editor.selectionStart = editor.selectionEnd = start + 2;
+  updateEditor();
+}
+
+// ── Wire up editor events ──
+editor.addEventListener('input', updateEditor);
+editor.addEventListener('scroll', syncScroll);
+editor.addEventListener('keydown', function(e) {
+  if (e.key === 'Tab') {
+    handleTab(e);
+  }
+});
+
+// ── Gutter click handler (breakpoint toggle) ──
+gutter.addEventListener('click', function(e) {
+  const lineEl = e.target.closest('.line-num');
+  if (!lineEl) return;
+  const allLines = gutter.querySelectorAll('.line-num');
+  const idx = Array.prototype.indexOf.call(allLines, lineEl);
+  if (idx >= 0) toggleBreakpoint(idx);
+});
+
+// ── Initial render ──
+updateEditor();
 </script>
 </body>
 </html>
