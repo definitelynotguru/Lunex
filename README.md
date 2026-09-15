@@ -8,12 +8,14 @@
 
 > Educational. Not a drop-in replacement for PUC-Rio Lua, Fengari, Wasmoon, or LuaJIT.
 
+<video src="https://raw.githubusercontent.com/definitelynotguru/Lunex/feat/lunex-remake/public/showcase.mp4" controls playsinline width="100%" style="max-width:960px;border-radius:8px;background:#0c0e12"></video>
+
+Title cards · fades · Fibonacci run → inspect (AST / bytecode / locals) → 8-bit CPU companion. Download: [`public/showcase.mp4`](./public/showcase.mp4).
 
 
 
-[![Lunex showcase](docs/showcase.gif)](public/showcase.mp4)
 
-Playground cut (~60s): Fibonacci run → AST / bytecode / locals → 8-bit CPU companion. Full video: [`public/showcase.mp4`](public/showcase.mp4).
+
 
 ---
 
