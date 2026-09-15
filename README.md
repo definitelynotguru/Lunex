@@ -1,114 +1,137 @@
 # Lunex
 
-Two projects, both single HTML files, no dependencies. One runs a high-level language, the other runs a CPU from scratch. The idea is to cover the full stack: how software gets interpreted at the top, and how hardware actually executes instructions at the bottom.
+**Browser Lua playground with a real register VM you can inspect — plus an 8-bit CPU companion.**
 
-**Lunex** (`index.html`) is a Lua interpreter. Lexer, parser, tree-walk interpreter, closures, metatables, the works.
+[![License: MIT](https://img.shields.io/badge/license-MIT-c4a35a.svg)](./LICENSE)
+![Target](https://img.shields.io/badge/Lua-5.2%20core-6b9b7a.svg)
+![Status](https://img.shields.io/badge/version-2.0.0--edu-8a7340.svg)
 
-**Lunex VM** (`vm.html`) is an 8-bit virtual CPU with 33 instructions, a two-pass assembler, and a debugger where you step through assembly tick by tick and watch registers change.
+> Educational. Not a drop-in replacement for PUC-Rio Lua, Fengari, Wasmoon, or LuaJIT.
 
----
+<video src="https://raw.githubusercontent.com/definitelynotguru/Lunex/feat/lunex-remake/public/showcase.mp4" controls playsinline width="100%" style="max-width:960px;border-radius:8px;background:#0c0e12"></video>
 
-## Lunex (Lua interpreter)
+Title cards · fades · Fibonacci run → inspect (AST / bytecode / locals) → 8-bit CPU companion. Download: [`public/showcase.mp4`](./public/showcase.mp4).
 
-A Lua interpreter in one file. It handles the language properly: lexical scoping, closures, metatables with `__index`, multi-return values, variadic functions, and a standard library that covers math, string, table, and os. There's a tree-walk interpreter, a recursive descent parser with correct operator precedence (right-associative `^` and `..`), and an environment that manages scope chains.
 
-### What it runs
 
-Types: number, string, boolean, nil, table, function. Block-scoped `local` variables. Control flow: `if/elseif/else/end`, `while`, `repeat/until`, numeric and generic `for`, `break`. Functions with closures, colon syntax (`obj:method()`), and `...` for variadics. Tables work as arrays, dictionaries, or both. Metatables via `setmetatable`/`getmetatable`.
 
-The standard library includes `math` (floor, ceil, sqrt, sin, cos, random, pi, ...), `string` (find, format, match, gsub, plus colon methods like `s:lower()`), `table` (insert, remove, sort, concat), `assert`/`error`/`pcall` for error handling, and `io.write` for output without newlines.
 
-### Running it
-
-```
-open index.html
-```
-
-Edit code on the left, press Ctrl+Enter (or click Run), output appears on the right. There's a pre-loaded demo that walks through Fibonacci with memoization, a Stack class using metatables, closures, string operations, and error handling with `pcall`.
-
-### How it works
-
-```
-Source Code → Lexer → Parser → Environment → Interpreter → StdLib → Console
-```
-
-Single `<script>` tag. The lexer tokenizes Lua source, the parser builds an AST, the environment chain manages scoping, and the interpreter walks the tree. Standard library functions are JS closures registered on the global environment. Runtime errors show up in red with line numbers; `pcall` catches them.
-
-### What it doesn't do
-
-No `goto`, no long strings (`[[ ]]`), no coroutines. `string.match` and `gsub` use JS regex, not Lua patterns. The `#` operator counts consecutive integer keys starting from 1. It's single-threaded, no `os.execute` or `io.read`.
 
 ---
 
-## Lunex VM (8-bit CPU emulator)
+## What it is
 
-A virtual 8-bit CPU. You write assembly, assemble it, and either run it or step through one instruction at a time while watching the machine state update.
+| Surface | Role |
+|---------|------|
+| **Lunex Playground** (`/`) | Edit Lua → lex/parse → **bytecode** → **register VM** → console. AST tree, disassembly, step-debug. |
+| **Lunex VM** (`/vm`) | 8-bit CPU with assembler + debugger (registers, flags, memory, breakpoints). Bottom-up companion. |
 
-### The CPU
+## What it isn’t
 
-Six registers: A (accumulator), B, C, D (general purpose), SP (stack pointer at 0xFF), PC (program counter). 256 bytes of memory. Four flags: Zero, Carry, Negative, Overflow.
-
-The instruction set covers 33 operations across five categories:
-
-| Category | Instructions |
-|----------|-------------|
-| Data | `NOP` `HLT` `MOV` `LDI` `LDA` `STA` `LDR` `STR` `PUSH` `POP` |
-| Arithmetic | `ADD` `SUB` `INC` `DEC` `MUL` `DIV` `MOD` `CMP` |
-| Logic | `AND` `OR` `XOR` `NOT` `SHL` `SHR` |
-| Branch | `JMP` `JZ` `JNZ` `JC` `JNC` `JN` `CALL` `RET` |
-| System | `INT` `OUT` |
-
-`PUSH` decrements SP before writing, `POP` reads before incrementing. `DIV` by zero halts with an error. `CALL` pushes the return address, `RET` pops it. `INT 0x01` prints A as a decimal number, `INT 0x02` prints A as a character.
-
-### The assembler
-
-Two passes. First pass collects labels and calculates instruction addresses. Second pass emits machine code. Supports `DB` (raw bytes), `DW` (16-bit, little-endian), and `DS` (null-terminated strings). Immediates work in decimal (`42`), hex (`0xFF`), or binary (`0b10101010`). Errors include line numbers. Comments use `;`.
-
-```asm
-; 10 + 20, print result
-start:
-    LDI A, 10
-    LDI B, 20
-    ADD A, B
-    INT 0x01        ; print A
-    HLT
-
-data:
-    DB 0x41, 0x42
-    DS "hello", 0
-```
-
-### The debugger
-
-This is the part I spent the most time on. You write assembly in the editor, click Assemble, then step through it. Each step, the right panel updates: register values (hex, binary, a proportional bar), flag indicators (lit or dim), the memory hex dump with the current PC highlighted, and the output console.
-
-You can run continuously at 1 to 1000 Hz, set breakpoints by clicking line numbers, and use keyboard shortcuts for everything (Ctrl+Enter to assemble, Ctrl+R to run/pause, Ctrl+. to step, Ctrl+Shift+R to reset).
-
-### Included programs
-
-There's a dropdown with four demos:
-
-- Fibonacci (first 15 numbers, wraps at 8 bits)
-- Bubble Sort (sorts a 4-element array in memory)
-- String Reverse (pushes "HELLO" onto the stack, pops it backward)
-- Countdown (10 down to 1)
-
-### Running it
-
-```
-open vm.html
-```
+- Not production Lua embedding (use Fengari / Wasmoon / host Lua).
+- Not faster than LuaJIT — we will never claim that.
+- Not a full PUC-Rio conformance suite (own vitest matrix; see gaps).
+- Not coroutines-complete; Lua patterns are JS-regex approximations.
 
 ---
 
-## Visual design
+## Quickstart
 
-Both files use the same look: dark background, Geist Mono font, green accent color, noise texture overlay, glassmorphism panels. They look like they belong together when you open them side by side.
+```bash
+npm install
+npm run dev          # playground + /vm
+npm test             # vitest
+npm run build        # static site → dist/ (GitHub Pages friendly)
+npm run preview
+```
 
-## Browser support
+Open the printed local URL. **Ctrl/Cmd+Enter** runs (playground) or assembles (CPU page).
 
-Chrome, Firefox, Safari, Edge. ES6+ required.
+Share snippets: `?code=` (URL-encoded) or `#code=` (base64url).
+
+### GitHub Pages
+
+`vite` `base: './'` → deploy the `dist/` folder (Actions or `gh-pages`). Multi-page: `index.html` + `vm.html`.
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+  S[Source] --> L[Lexer]
+  L --> P[Parser / AST]
+  P --> C[Bytecode compiler]
+  C --> V[Register VM]
+  V --> Lib[Standard library]
+  V --> Out[Console]
+  C --> D[Disassembler]
+  V --> Step[Step-debug / locals]
+```
+
+Pipeline mirrors the PUC-Rio story: **source → bytecode → register machine**, with AST kept as compiler IR. The 8-bit CPU page is intentionally a separate ISA — hardware intuition, not Lua bytecode.
+
+---
+
+## Lua 5.2 gap matrix
+
+Legend: **✓** supported · **◐** partial · **✗** not in this build
+
+| Area | Status | Notes |
+|------|--------|-------|
+| Lex / long strings `[[ ]]` / long comments | ✓ | |
+| Locals, scoping, closures / upvalues | ✓ | |
+| Tables, `#`, `setmetatable` / `__index` (table) | ✓ | `__index` function ◐ |
+| Numeric / generic `for`, `while`, `repeat` | ✓ | |
+| Multi-return, variadics `...` | ✓ | edge cases ◐ |
+| `pcall` / `error` / `assert` | ✓ | |
+| `math` / `string` / `table` / `os.clock` | ✓ | |
+| Bytecode dump + VM step | ✓ | |
+| `goto` / labels | ✗ | tractable later |
+| Full metamethod set (`__add`, `__call`, …) | ◐ | `__index` primary |
+| Coroutines | ✗ | stretch |
+| Lua patterns | ◐ | JS `RegExp` stand-in |
+| `_ENV` / Lua 5.2 env model | ◐ | globals table only |
+| Integers / bitwise / `utf8` (5.3) | ✗ | selective later |
+| Official `lua-tests` suite | ◐ | not vendored; own vitest |
+
+---
+
+## Why not Fengari / Wasmoon / LuaJIT?
+
+| | Lunex | Fengari | Wasmoon | LuaJIT |
+|--|-------|---------|---------|--------|
+| Goal | Teach bytecode + VM in-browser | Run PUC Lua in JS | WASM Lua | Native speed |
+| Inspectable bytecode / step | First-class | Limited | Limited | Native tools |
+| 8-bit CPU companion | Yes | No | No | No |
+| Conformance | Educational 5.2 core | High | High | High |
+| Performance claim | None vs LuaJIT | — | — | King |
+
+Use Lunex to **see** the machine. Use the others to **ship**.
+
+---
+
+## Tests
+
+```bash
+npm test
+```
+
+Vitest covers lexer (incl. long strings), parser smoke, and VM semantics: arithmetic, closures, numeric `for`, metatable Stack, `pcall`, `table.sort`/`concat`, disassembly. Honest status: **not** the official Lua test suite.
+
+---
+
+## Layout
+
+```
+src/lua/     lexer, parser, bytecode, compiler, vm, stdlib, public API
+src/playground/  CodeMirror UI, demos, share, inspector
+src/vm/      8-bit assembler + CPU + debugger UI
+tests/       vitest
+```
+
+---
 
 ## License
 
-MIT
+MIT © 2026 aevum
