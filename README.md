@@ -11,7 +11,9 @@
 
 
 
-**Showcase media:** placeholders in `public/showcase.mp4` / `docs/showcase.gif` — Head SWE will drop the cut. Preferred shot list: open playground → run Tour → AST + bytecode → step locals → flip to `/vm`.
+[![Lunex showcase](docs/showcase.gif)](public/showcase.mp4)
+
+Playground cut (~60s): Fibonacci run → AST / bytecode / locals → 8-bit CPU companion. Full video: [`public/showcase.mp4`](public/showcase.mp4).
 
 ---
 
