@@ -33,6 +33,8 @@ interface CallFrame {
   wantResults: number;
   returnTo: number; // register in caller for results
   caller: CallFrame | null;
+  /** Stack top for multret CALL/RETURN/VARARG (exclusive end index). */
+  top: number;
 }
 
 export class LuaVM {
@@ -76,6 +78,7 @@ export class LuaVM {
       wantResults: 0,
       returnTo: 0,
       caller: null,
+      top: 0,
     };
     this.frame = frame;
     this.running = true;
@@ -206,7 +209,7 @@ export class LuaVM {
       case Op.GETTABLE: {
         const table = R[B];
         const key = R[C];
-        R[A] = this.getTable(table, key, ins.line);
+        R[A] = await this.getTable(table, key, ins.line);
         break;
       }
       case Op.SETTABLE:
@@ -219,7 +222,7 @@ export class LuaVM {
         const obj = R[B];
         const key = R[C];
         R[A + 1] = obj;
-        R[A] = this.getTable(obj, key, ins.line);
+        R[A] = await this.getTable(obj, key, ins.line);
         break;
       }
       case Op.ADD:
@@ -323,7 +326,9 @@ export class LuaVM {
       }
       case Op.VARARG: {
         const want = B === 0 ? frame.varargs.length : B - 1;
+        this.ensureRegs(frame, A + want);
         for (let i = 0; i < want; i++) R[A + i] = frame.varargs[i] ?? null;
+        if (B === 0) frame.top = A + want;
         break;
       }
       case Op.SETLIST: {
@@ -337,39 +342,56 @@ export class LuaVM {
     }
   }
 
+  private ensureRegs(frame: CallFrame, need: number) {
+    while (frame.regs.length < need) frame.regs.push(null);
+  }
+
   private async opCall(frame: CallFrame, ins: Instruction) {
     const { A, B, C } = ins;
     const fn = frame.regs[A];
-    const nargs = B === 0 ? 0 : B - 1;
+    const nargs = B === 0 ? Math.max(0, frame.top - A - 1) : B - 1;
     const args: LuaValue[] = [];
     for (let i = 1; i <= nargs; i++) args.push(frame.regs[A + i]);
     const nwant = C === 0 ? -1 : C - 1;
     const results = await this.invoke(fn, args, ins.line);
-    if (nwant === 0) return;
-    if (nwant === -1) {
-      for (let i = 0; i < results.length; i++) frame.regs[A + i] = results[i];
-    } else {
-      for (let i = 0; i < nwant; i++) frame.regs[A + i] = results[i] ?? null;
+    if (nwant === 0) {
+      frame.top = A;
+      return;
     }
+    if (nwant === -1) {
+      this.ensureRegs(frame, A + results.length);
+      for (let i = 0; i < results.length; i++) frame.regs[A + i] = results[i];
+      frame.top = A + results.length;
+    } else {
+      this.ensureRegs(frame, A + nwant);
+      for (let i = 0; i < nwant; i++) frame.regs[A + i] = results[i] ?? null;
+      frame.top = A + nwant;
+    }
+  }
+
+  private collectReturn(frame: CallFrame, A: number, B: number): LuaValue[] {
+    if (B === 1) return [];
+    if (B > 1) {
+      const results: LuaValue[] = [];
+      for (let i = 0; i < B - 1; i++) results.push(frame.regs[A + i]);
+      return results;
+    }
+    // B==0 multret — from A to top
+    const end = Math.max(frame.top, A);
+    const results: LuaValue[] = [];
+    for (let i = A; i < end; i++) results.push(frame.regs[i]);
+    return results;
   }
 
   private opReturn(frame: CallFrame, ins: Instruction) {
     const { A, B } = ins;
-    let results: LuaValue[] = [];
-    if (B === 1) results = [];
-    else if (B > 1) {
-      for (let i = 0; i < B - 1; i++) results.push(frame.regs[A + i]);
-    } else {
-      // B==0 multret — from A to top; approximate as single
-      results = [frame.regs[A]];
-    }
+    // Results are consumed by invoke()'s RETURN handling for nested calls.
+    void this.collectReturn(frame, A, B);
     if (!frame.caller) {
       this.running = false;
       this.frame = null;
       return;
     }
-    // Should not happen in our flat CALL that inlines invoke — RETURN inside nested
-    // We use invoke for Lua closures which creates nested execute
     this.frame = frame.caller;
   }
 
@@ -391,6 +413,7 @@ export class LuaVM {
         wantResults: -1,
         returnTo: 0,
         caller: this.frame,
+        top: 0,
       };
       for (let i = 0; i < closure.proto.numParams; i++) child.regs[i] = args[i] ?? null;
       if (closure.proto.isVararg) child.varargs = args.slice(closure.proto.numParams);
@@ -404,11 +427,7 @@ export class LuaVM {
         if (ins.op === Op.RETURN) {
           child.pc++;
           const { A, B } = ins;
-          if (B === 1) {
-            /* none */
-          } else if (B > 1) {
-            for (let i = 0; i < B - 1; i++) rets.push(child.regs[A + i]);
-          } else rets.push(child.regs[A]);
+          rets.push(...this.collectReturn(child, A, B));
           break;
         }
         this.lastPC = child.pc;
@@ -468,7 +487,7 @@ export class LuaVM {
     throw new LuaRuntimeError('attempt to get length of a ' + this.typeName(v) + ' value', line);
   }
 
-  getTable(table: LuaValue, key: LuaValue, line: number): LuaValue {
+  async getTable(table: LuaValue, key: LuaValue, line: number): Promise<LuaValue> {
     if (typeof table === 'string') {
       const lib = this.globals.string as any;
       const method = lib && lib[key as any];
@@ -487,12 +506,12 @@ export class LuaVM {
     if (mt && mt.__index != null) {
       const idx = mt.__index;
       if (typeof idx === 'function') {
-        const r = idx(t, k);
+        const r = await idx(t, k);
         return r === undefined ? null : r;
       }
       if (idx && idx.__luaClosure) {
-        // defer to invoke in CALL path — return bound-style not available sync
-        return null;
+        const results = await this.invoke(idx, [t, k], line);
+        return results[0] ?? null;
       }
       if (idx && typeof idx === 'object') {
         return idx[k] !== undefined ? idx[k] : null;

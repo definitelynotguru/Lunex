@@ -22,8 +22,14 @@ let inspectMode: 'ast' | 'bc' | 'locals' = 'ast';
 let lastAst: unknown = null;
 let lastDisasm = '';
 let lastLocals: Record<string, unknown> = {};
-let stepResolver: (() => void) | null = null;
 let stepping = false;
+let runToken = 0;
+let activeGate: {
+  token: number;
+  resolve: (() => void) | null;
+  continueTimer: ReturnType<typeof setInterval> | null;
+  dispose: () => void;
+} | null = null;
 
 for (const d of DEMOS) {
   const opt = document.createElement('option');
@@ -133,22 +139,55 @@ function makeRuntime(stepMode: boolean) {
   });
 }
 
+function disposeActiveGate() {
+  if (!activeGate) return;
+  activeGate.dispose();
+  activeGate = null;
+}
+
 async function runCode(stepMode: boolean) {
+  disposeActiveGate();
+  const token = ++runToken;
   stepping = stepMode;
   btnContinue.disabled = !stepMode;
   const source = view.state.doc.toString();
   statusLeft.textContent = stepMode ? 'Stepping…' : 'Running…';
   const rt = makeRuntime(stepMode);
+
   if (stepMode) {
+    const gate = {
+      token,
+      resolve: null as (() => void) | null,
+      continueTimer: null as ReturnType<typeof setInterval> | null,
+      dispose() {
+        if (this.continueTimer) {
+          clearInterval(this.continueTimer);
+          this.continueTimer = null;
+        }
+        if (this.resolve) {
+          const r = this.resolve;
+          this.resolve = null;
+          r();
+        }
+        rt.setStepGate(null);
+      },
+    };
+    activeGate = gate;
     rt.setStepGate(
       () =>
         new Promise<void>((resolve) => {
-          stepResolver = resolve;
+          if (activeGate !== gate || gate.token !== runToken) {
+            resolve();
+            return;
+          }
+          gate.resolve = resolve;
         }),
     );
   }
+
   try {
     const result = await rt.run(source);
+    if (token !== runToken) return;
     lastAst = result.ast;
     lastDisasm = result.disasm;
     lastLocals = rt.vm.lastLocals as Record<string, unknown>;
@@ -156,6 +195,7 @@ async function runCode(stepMode: boolean) {
     statusLeft.textContent = `Done · ${result.proto.code.length} ops · line ${rt.vm.lastLine || '—'}`;
     appendConsole('— ok —', 'meta');
   } catch (e: any) {
+    if (token !== runToken) return;
     appendConsole(String(e?.message || e), 'err');
     statusLeft.textContent = 'Error';
     try {
@@ -167,31 +207,44 @@ async function runCode(stepMode: boolean) {
       /* parse error already shown */
     }
   } finally {
-    stepping = false;
-    btnContinue.disabled = true;
-    stepResolver = null;
+    if (activeGate && activeGate.token === token) disposeActiveGate();
+    if (token === runToken) {
+      stepping = false;
+      btnContinue.disabled = true;
+    }
   }
 }
 
 btnRun.addEventListener('click', () => void runCode(false));
 btnStep.addEventListener('click', () => {
-  if (stepResolver) {
-    stepResolver();
-    stepResolver = null;
+  if (activeGate?.resolve) {
+    const r = activeGate.resolve;
+    activeGate.resolve = null;
+    r();
   } else void runCode(true);
 });
 btnContinue.addEventListener('click', () => {
-  // disable step gate for rest of run
-  if (stepResolver) {
-    // drain by resolving and turning off step mode is hard mid-flight;
-    // resolve current and keep resolving via auto
-    const id = setInterval(() => {
-      if (stepResolver) {
-        stepResolver();
-        stepResolver = null;
-      } else clearInterval(id);
-    }, 0);
+  const gate = activeGate;
+  if (!gate) return;
+  if (gate.continueTimer) {
+    clearInterval(gate.continueTimer);
+    gate.continueTimer = null;
   }
+  gate.continueTimer = setInterval(() => {
+    if (activeGate !== gate) {
+      clearInterval(gate.continueTimer!);
+      gate.continueTimer = null;
+      return;
+    }
+    if (gate.resolve) {
+      const r = gate.resolve;
+      gate.resolve = null;
+      r();
+    } else {
+      clearInterval(gate.continueTimer!);
+      gate.continueTimer = null;
+    }
+  }, 0);
 });
 
 refreshInspector();

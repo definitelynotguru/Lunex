@@ -929,7 +929,12 @@ class CPU {
   /** Load assembled bytes into memory and set up line mapping. */
   loadProgram(assembledBytes, lineMap) {
     this.reset();
-    for (let i = 0; i < assembledBytes.length && i < 256; i++) {
+    if (assembledBytes.length > 256) {
+      throw new Error(
+        'Program exceeds 256-byte memory limit (' + assembledBytes.length + ' bytes)',
+      );
+    }
+    for (let i = 0; i < assembledBytes.length; i++) {
       this.memory[i] = assembledBytes[i];
     }
     this.lineMap = lineMap || [];

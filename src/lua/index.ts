@@ -31,12 +31,14 @@ export function createRuntime(opts: {
 } = {}): Runtime {
   const outputs: string[] = [];
   let lineBuf = '';
-  const sink: PrintSink = opts.sink || {
+  const userSink = opts.sink;
+  const sink: PrintSink = {
     print: (text) => {
       if (lineBuf) {
         outputs.push(lineBuf + text);
         lineBuf = '';
       } else outputs.push(text);
+      userSink?.print(text);
     },
     write: (text) => {
       lineBuf += text;
@@ -45,6 +47,7 @@ export function createRuntime(opts: {
         lineBuf = parts.pop() || '';
         for (const p of parts) outputs.push(p);
       }
+      userSink?.write(text);
     },
   };
 

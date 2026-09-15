@@ -112,7 +112,13 @@ function assemble() {
     outEl.textContent = (result.errors || []).map((e: any) => `L${e.line}: ${e.message}`).join('\n');
     return;
   }
-  cpu.loadProgram(result.bytes, result.lineMap);
+  try {
+    cpu.loadProgram(result.bytes, result.lineMap);
+  } catch (e: any) {
+    statusEl.textContent = String(e?.message || e);
+    outEl.textContent = String(e?.message || e);
+    return;
+  }
   statusEl.textContent = `Assembled ${result.bytes.length} bytes`;
   updateUI();
 }

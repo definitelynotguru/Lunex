@@ -183,7 +183,15 @@ export function registerStdLib(vm: LuaVM) {
       if (j < 0) j = s.length + j + 1;
       return s.substring(i - 1, j);
     },
-    rep: (s: any, n: number) => String(s).repeat(n),
+    rep: (s: any, n: number) => {
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0 || !Number.isSafeInteger(n)) {
+        throw new LuaRuntimeError("bad argument #2 to 'rep' (non-negative integer expected)");
+      }
+      if (n > 1_000_000) {
+        throw new LuaRuntimeError("bad argument #2 to 'rep' (count too large)");
+      }
+      return String(s).repeat(n);
+    },
     reverse: (s: any) => String(s).split('').reverse().join(''),
     byte: (s: any, i?: number) => String(s).charCodeAt((i || 1) - 1),
     char: (...args: number[]) => String.fromCharCode(...args),
@@ -231,7 +239,13 @@ export function registerStdLib(vm: LuaVM) {
         return null;
       }
     },
-    gsub: (s: any, pattern: string, repl: any) => String(s).replace(new RegExp(pattern, 'g'), repl),
+    gsub: (s: any, pattern: string, repl: any) => {
+      try {
+        return String(s).replace(new RegExp(pattern, 'g'), repl);
+      } catch (e: any) {
+        throw new LuaRuntimeError(e?.message ?? 'invalid pattern');
+      }
+    },
   };
   g.string = stringLib;
 

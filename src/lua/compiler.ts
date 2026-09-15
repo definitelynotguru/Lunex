@@ -201,17 +201,32 @@ function compileStmt(fs: FuncState, node: any) {
   }
 }
 
+function isMultretExpr(node: any): boolean {
+  if (!node) return false;
+  return (
+    node.type === 'CallExpression' ||
+    node.type === 'MethodCall' ||
+    node.type === 'VarargExpression'
+  );
+}
+
 function compileExprList(fs: FuncState, exprs: any[], want: number): number {
   if (!exprs.length) {
     if (want > 0) for (let i = 0; i < want; i++) fs.emit(Op.LOADNIL, fs.reserve(1), 0, 0, {}, 0);
     return want < 0 ? 0 : want;
   }
   const base = fs.freeReg;
+  let open = false;
   for (let i = 0; i < exprs.length; i++) {
     const last = i === exprs.length - 1;
-    if (last && want < 0) compileExpr(fs, exprs[i], fs.freeReg, -1);
-    else if (last && want >= 0) compileExpr(fs, exprs[i], fs.freeReg, Math.max(1, want - i));
-    else compileExpr(fs, exprs[i], fs.freeReg, 1);
+    if (last && want < 0) {
+      open = isMultretExpr(exprs[i]);
+      compileExpr(fs, exprs[i], fs.freeReg, open ? -1 : 1);
+    } else if (last && want >= 0) {
+      compileExpr(fs, exprs[i], fs.freeReg, Math.max(1, want - i));
+    } else {
+      compileExpr(fs, exprs[i], fs.freeReg, 1);
+    }
   }
   if (want >= 0) {
     const have = fs.freeReg - base;
@@ -219,7 +234,7 @@ function compileExprList(fs: FuncState, exprs: any[], want: number): number {
     fs.freeTo(base + want);
     return want;
   }
-  return -1;
+  return open ? -1 : fs.freeReg - base;
 }
 
 function compileExpr(fs: FuncState, node: any, dest: number, nresults: number) {
@@ -451,20 +466,20 @@ function compileCall(fs: FuncState, node: any, dest: number, nresults: number) {
   ensureDest(fs, dest);
   compileExpr(fs, node.callee ?? node.base ?? node.func, dest, 1);
   const args = node.arguments ?? node.args ?? [];
-  let nargs: number;
-  if (!args.length) nargs = 0;
-  else {
+  let open = false;
+  let nargs = 0;
+  if (args.length) {
     const start = dest + 1;
     fs.freeReg = start;
     for (let i = 0; i < args.length; i++) {
       const last = i === args.length - 1;
-      compileExpr(fs, args[i], fs.freeReg, last ? -1 : 1);
+      open = last && isMultretExpr(args[i]);
+      compileExpr(fs, args[i], fs.freeReg, open ? -1 : 1);
     }
-    nargs = -1; // treat as unknown / multret from last — simplify: fixed
     nargs = fs.freeReg - start;
   }
   // CALL A B C: A=fn, B=nargs+1 (0=multret), C=nresults+1 (0=multret)
-  const B = nargs + 1;
+  const B = open ? 0 : nargs + 1;
   const C = nresults < 0 ? 0 : nresults + 1;
   fs.emit(Op.CALL, dest, B, C, {}, line);
   if (nresults === 0) fs.freeTo(dest);
@@ -485,12 +500,14 @@ function compileMethodCall(fs: FuncState, node: any, dest: number, nresults: num
   // SELF leaves fn at t, self at t+1
   fs.freeReg = t + 2;
   const args = node.arguments ?? node.args ?? [];
+  let open = false;
   for (let i = 0; i < args.length; i++) {
     const last = i === args.length - 1;
-    compileExpr(fs, args[i], fs.freeReg, last ? 1 : 1);
+    open = last && isMultretExpr(args[i]);
+    compileExpr(fs, args[i], fs.freeReg, open ? -1 : 1);
   }
   const nargs = fs.freeReg - t - 1; // includes self
-  const B = nargs + 1;
+  const B = open ? 0 : nargs + 1;
   const C = nresults < 0 ? 0 : nresults + 1;
   fs.emit(Op.CALL, t, B, C, {}, line);
   if (nresults === 0) fs.freeTo(dest);
@@ -682,7 +699,7 @@ function compileForGeneric(fs: FuncState, node: any) {
   fs.emit(Op.TFORCALL, base, 0, names.length, {}, line);
   const tfor = fs.emit(Op.TFORLOOP, base, 0, 0, { sBx: 0 }, line);
   fs.code[tfor].sBx = bodyPC - tfor - 1;
-  fs.fixJump(jmpToLoop, tfor);
+  fs.fixJump(jmpToLoop, callPC);
   fs.leaveScope();
   for (const b of fs.breaks.pop()!) fs.fixJump(b);
   fs.freeTo(base);

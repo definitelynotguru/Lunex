@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createRuntime, run } from '../src/lua';
+import { LuaRuntimeError } from '../src/lua/vm';
 
 describe('Lua register VM', () => {
   it('runs arithmetic and print', async () => {
@@ -56,8 +57,16 @@ print(s:pop())
     const out = await run(`
 local ok, err = pcall(function() error("boom") end)
 print(tostring(ok), tostring(err))
+local ok2, err2 = pcall(function()
+  return pcall(function() error("inner") end)
+end)
+print(tostring(ok2))
 `);
-    expect(out.join(' ')).toMatch(/false/);
+    const joined = out.join('\n');
+    expect(joined).toMatch(/false/);
+    expect(joined).toMatch(/boom/);
+    expect(out[0]).toMatch(/false/);
+    expect(out[0]).toMatch(/boom/);
   });
 
   it('supports ipairs / tables', async () => {
@@ -79,5 +88,107 @@ print(table.concat(t, ","))
   it('supports long strings', async () => {
     const out = await run('print([[ab]])');
     expect(out.some((l) => l.includes('ab'))).toBe(true);
+  });
+
+  it('forwards multret on assign, return, and select', async () => {
+    const out = await run(`
+local function f() return 1, 2, 3 end
+local a, b, c = f()
+print(a, b, c)
+print(select('#', f()))
+local function g() return f() end
+local x, y, z = g()
+print(x, y, z)
+`);
+    expect(out[0]).toBe('1\t2\t3');
+    expect(out[1]).toBe('3');
+    expect(out[2]).toBe('1\t2\t3');
+  });
+
+  it('passes all multret tail args into calls', async () => {
+    const out = await run(`
+local function g() return 10, 20, 30 end
+local function f(...)
+  print(select('#', ...))
+  print(...)
+end
+f(g())
+`);
+    expect(out[0]).toBe('3');
+    expect(out[1]).toBe('10\t20\t30');
+  });
+
+  it('runs generic-for with pairs and break', async () => {
+    const out = await run(`
+local n = 0
+local seen = 0
+for k, v in pairs({x = 1, y = 2, z = 3}) do
+  n = n + 1
+  if n == 2 then break end
+  seen = seen + 1
+end
+print(n, seen)
+local total = 0
+for k, v in pairs({a = 1, b = 2, c = 3}) do
+  total = total + 1
+end
+print(total)
+`);
+    expect(out[0]).toBe('2\t1');
+    expect(out[1]).toBe('3');
+  });
+
+  it('forwards varargs to select and nested calls', async () => {
+    const out = await run(`
+local function s(...)
+  return select('#', ...)
+end
+print(s(1, 2, 3))
+local function f(...)
+  return select('#', ...)
+end
+local function g(...)
+  return f(...)
+end
+print(g(1, 2, 3, 4))
+`);
+    expect(out[0]).toBe('3');
+    expect(out[1]).toBe('4');
+  });
+
+  it('raises LuaRuntimeError on invalid gsub pattern', async () => {
+    await expect(run(`string.gsub('abc', '(', 'x')`)).rejects.toBeInstanceOf(LuaRuntimeError);
+  });
+
+  it('validates string.rep count', async () => {
+    const ok = await run(`print(string.rep('ab', 3))`);
+    expect(ok.some((l) => l.includes('ababab'))).toBe(true);
+    await expect(run(`string.rep('x', -1)`)).rejects.toBeInstanceOf(LuaRuntimeError);
+    await expect(run(`string.rep('x', 1.5)`)).rejects.toBeInstanceOf(LuaRuntimeError);
+  });
+
+  it('invokes function __index metamethod', async () => {
+    const out = await run(`
+local t = setmetatable({}, {
+  __index = function(tbl, key)
+    return 42
+  end
+})
+print(t.missing)
+`);
+    expect(out.some((l) => l.includes('42'))).toBe(true);
+  });
+
+  it('tees custom sink into RunResult.outputs', async () => {
+    const seen: string[] = [];
+    const rt = createRuntime({
+      sink: {
+        print: (t) => seen.push(t),
+        write: () => {},
+      },
+    });
+    const result = await rt.run('print(9)');
+    expect(seen.some((l) => l.includes('9'))).toBe(true);
+    expect(result.outputs.some((l) => l.includes('9'))).toBe(true);
   });
 });
