@@ -8,11 +8,8 @@
 
 > Educational. Not a drop-in replacement for PUC-Rio Lua, Fengari, Wasmoon, or LuaJIT.
 
-<!-- Showcase: replace with public/showcase.mp4 when recorded -->
-<!--
-<video src="./public/showcase.mp4" controls width="720"></video>
-![showcase](./docs/showcase.gif)
--->
+
+
 
 **Showcase media:** placeholders in `public/showcase.mp4` / `docs/showcase.gif` — Head SWE will drop the cut. Preferred shot list: open playground → run Tour → AST + bytecode → step locals → flip to `/vm`.
 
